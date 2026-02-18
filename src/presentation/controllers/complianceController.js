@@ -28,10 +28,15 @@ export class ComplianceController {
 
   evaluateControl = async (req, res) => {
     const { controlId, provider, repoName } = req.body ?? {};
+    const [owner, repo] = String(repoName ?? "").split("/");
 
     try {
       if (!isProvider(provider)) {
         res.status(400).json({ error: "Invalid provider." });
+        return;
+      }
+      if (!owner || !repo) {
+        res.status(400).json({ error: "repoName must be in 'owner/repo' format" });
         return;
       }
 
@@ -42,7 +47,7 @@ export class ComplianceController {
       const evidence = await this.mcpClient.callTool(
         provider,
         plan.mcpMethod,
-        { repo: repoName, ...plan.params },
+        { owner, repo, ...plan.params },
         token
       );
 

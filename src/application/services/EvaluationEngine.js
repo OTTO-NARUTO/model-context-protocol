@@ -11,6 +11,15 @@ export default class EvaluationEngine {
   }
 
   evaluate(controlId, evidenceData) {
+    if (this._hasMcpError(evidenceData)) {
+      const message = this._extractMcpErrorMessage(evidenceData);
+      return {
+        status: "ERROR",
+        findings: `MCP Tool Error: ${message}`,
+        metadata: { error: true }
+      };
+    }
+
     const rule = this.rules[controlId] || this.rules.DEFAULT;
     return rule(evidenceData);
   }
@@ -92,5 +101,47 @@ export default class EvaluationEngine {
     }
 
     return data;
+  }
+
+  _hasMcpError(data) {
+    if (!data) {
+      return false;
+    }
+
+    if (typeof data === "object" && data.isError === true) {
+      return true;
+    }
+
+    const message = this._extractMcpErrorMessage(data);
+    return Boolean(message);
+  }
+
+  _extractMcpErrorMessage(data) {
+    if (!data) {
+      return "";
+    }
+
+    if (typeof data === "string") {
+      return data.toLowerCase().includes("error") ? data : "";
+    }
+
+    if (Array.isArray(data)) {
+      const textBlock = data.find((block) => block?.type === "text" && typeof block?.text === "string");
+      if (!textBlock) {
+        return "";
+      }
+      return textBlock.text.toLowerCase().includes("error") ? textBlock.text : "";
+    }
+
+    if (typeof data === "object") {
+      if (typeof data.error === "string" && data.error) {
+        return data.error;
+      }
+      if (Array.isArray(data.content)) {
+        return this._extractMcpErrorMessage(data.content);
+      }
+    }
+
+    return "";
   }
 }
