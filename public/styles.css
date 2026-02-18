@@ -1,0 +1,136 @@
+:root {
+  --bg: #f2efe7;
+  --panel: #fffdf8;
+  --text: #1b1c1d;
+  --accent: #004f4d;
+  --accent-soft: #d8eceb;
+  --danger: #9b2226;
+  --ok: #1b7f3b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  color: var(--text);
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  background: radial-gradient(circle at 10% 10%, #fff 0, var(--bg) 45%);
+}
+
+.shell {
+  max-width: 1024px;
+  margin: 0 auto;
+  padding: 24px;
+  display: grid;
+  gap: 16px;
+}
+
+.hero {
+  background: linear-gradient(120deg, #12343b, #2d6a6e);
+  color: #fff;
+  border-radius: 16px;
+  padding: 20px;
+}
+
+.hero h1 {
+  margin: 0 0 6px;
+}
+
+.panel {
+  background: var(--panel);
+  border-radius: 12px;
+  padding: 16px;
+  border: 1px solid #ded7c8;
+}
+
+.cards {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.card {
+  border: 1px solid #cdc8ba;
+  border-radius: 10px;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.connected {
+  background: #d9f2df;
+  color: var(--ok);
+}
+
+.disconnected {
+  background: #fde3e4;
+  color: var(--danger);
+}
+
+.form-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  margin-bottom: 12px;
+}
+
+label {
+  display: grid;
+  gap: 6px;
+  font-size: 14px;
+}
+
+input,
+textarea,
+select,
+button {
+  border: 1px solid #b6b2a7;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 14px;
+}
+
+textarea {
+  width: 100%;
+  resize: vertical;
+}
+
+button {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  cursor: pointer;
+}
+
+button.secondary {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid #78a6a4;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+pre {
+  margin: 0;
+  white-space: pre-wrap;
+  background: #f5f2ea;
+  border-radius: 8px;
+  padding: 12px;
+  min-height: 120px;
+}

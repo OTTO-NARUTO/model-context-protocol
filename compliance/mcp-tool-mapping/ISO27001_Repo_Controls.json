@@ -1,0 +1,80 @@
+{
+    "compliance_standard": "ISO 27001:2022",
+    "controls": [
+        {
+            "control_code": "5.18",
+            "control_name": "Access rights",
+            "component": "Organizational controls",
+            "mappings": [
+                {
+                    "evidence_source": "identity_scan",
+                    "tools": {
+                        "github": "list_collaborators",
+                        "gitlab": "list_project_members",
+                        "bitbucket": "bb_ls_users"
+                    }
+                }
+            ]
+        },
+        {
+            "control_code": "8.8",
+            "control_name": "Management of technical vulnerabilities",
+            "component": "Technological controls",
+            "mappings": [
+                {
+                    "evidence_source": "vapt_scan",
+                    "tools": {
+                        "github": "list_dependabot_alerts",
+                        "gitlab": "list_vulnerability_findings",
+                        "bitbucket": "bb_list_vulnerabilities"
+                    }
+                }
+            ]
+        },
+        {
+            "control_code": "8.9",
+            "control_name": "Configuration management",
+            "component": "Technological controls",
+            "mappings": [
+                {
+                    "evidence_source": "code_repo_scan",
+                    "tools": {
+                        "github": "get_branch_protection",
+                        "gitlab": "get_project_protected_branches",
+                        "bitbucket": "list_branch_restrictions"
+                    }
+                }
+            ]
+        },
+        {
+            "control_code": "8.28",
+            "control_name": "Secure coding",
+            "component": "Technological controls",
+            "mappings": [
+                {
+                    "evidence_source": "code_repo_scan",
+                    "tools": {
+                        "github": "list_pull_requests",
+                        "gitlab": "list_merge_requests",
+                        "bitbucket": "list_pullrequests"
+                    }
+                }
+            ]
+        },
+        {
+            "control_code": "8.29",
+            "control_name": "Security testing in development",
+            "component": "Technological controls",
+            "mappings": [
+                {
+                    "evidence_source": "code_repo_scan",
+                    "tools": {
+                        "github": "list_workflow_runs",
+                        "gitlab": "list_pipeline_jobs",
+                        "bitbucket": "bb_list_pipelines"
+                    }
+                }
+            ]
+        }
+    ]
+}
