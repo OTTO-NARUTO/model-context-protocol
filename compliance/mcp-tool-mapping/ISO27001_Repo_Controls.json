@@ -9,7 +9,7 @@
                 {
                     "evidence_source": "identity_scan",
                     "tools": {
-                        "github": "list_collaborators",
+                        "github": "get_me", 
                         "gitlab": "list_project_members",
                         "bitbucket": "bb_ls_users"
                     }
@@ -24,7 +24,7 @@
                 {
                     "evidence_source": "vapt_scan",
                     "tools": {
-                        "github": "list_dependabot_alerts",
+                        "github": "list_issues",
                         "gitlab": "list_vulnerability_findings",
                         "bitbucket": "bb_list_vulnerabilities"
                     }
@@ -39,7 +39,7 @@
                 {
                     "evidence_source": "code_repo_scan",
                     "tools": {
-                        "github": "get_branch_protection",
+                        "github": "list_branches",
                         "gitlab": "get_project_protected_branches",
                         "bitbucket": "list_branch_restrictions"
                     }
@@ -69,7 +69,7 @@
                 {
                     "evidence_source": "code_repo_scan",
                     "tools": {
-                        "github": "list_workflow_runs",
+                        "github": "list_commits",
                         "gitlab": "list_pipeline_jobs",
                         "bitbucket": "bb_list_pipelines"
                     }

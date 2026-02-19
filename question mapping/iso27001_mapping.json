@@ -1,0 +1,37 @@
+[
+    {
+        "control_id": "5.18",
+        "control_name": "Access Rights",
+        "question": "Who has access to the repository, and what roles or permission levels are assigned to each user?",
+        "mcp_tool": "get_teams",
+        "required_args": ["org"]
+    },
+    {
+        "control_id": "8.9",
+        "control_name": "Configuration Management",
+        "question": "Are branch protection rules configured and enforced for critical branches?",
+        "mcp_tool": "list_branches",
+        "required_args": ["owner", "repo"]
+    },
+    {
+        "control_id": "8.28",
+        "control_name": "Secure Coding",
+        "question": "Are pull requests required and reviewed before code is merged into protected branches?",
+        "mcp_tool": "list_pull_requests",
+        "required_args": ["owner", "repo"]
+    },
+    {
+        "control_id": "8.29",
+        "control_name": "Security Testing in Development",
+        "question": "Are automated CI/CD pipelines or security checks executed for code changes?",
+        "mcp_tool": "list_commits",
+        "required_args": ["owner", "repo"]
+    },
+    {
+        "control_id": "8.8",
+        "control_name": "Management of Technical Vulnerabilities",
+        "question": "Are dependency vulnerabilities and security alerts monitored and reviewed?",
+        "mcp_tool": "list_issues",
+        "required_args": ["owner", "repo"]
+    }
+]

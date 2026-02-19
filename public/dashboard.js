@@ -9,10 +9,13 @@ const runComplianceTestBtn = document.getElementById("runComplianceTestBtn");
 const resultSection = document.getElementById("resultSection");
 const resultBox = document.getElementById("resultBox");
 const SINGLE_TENANT_ID = "tenant-acme";
+const AUTO_LOGOUT_MS = 30 * 60 * 1000;
+let logoutTimerId = null;
+let logoutInProgress = false;
 
-const complianceDefaultControlMap = {
-  iso27001: "8.28",
-  soc2: "CC6.1"
+const complianceStandardMap = {
+  iso27001: "ISO27001",
+  soc2: "SOC2"
 };
 
 dashboardTitle.textContent = `${provider} Dashboard`;
@@ -99,10 +102,10 @@ async function runComplianceTest() {
     return;
   }
 
-  const controlId = complianceDefaultControlMap[selectedCompliance];
-  if (!controlId) {
+  const standard = complianceStandardMap[selectedCompliance];
+  if (!standard) {
     resultSection.hidden = false;
-    resultBox.textContent = `No default control configured for ${selectedCompliance}.`;
+    resultBox.textContent = `No standard configured for ${selectedCompliance}.`;
     return;
   }
 
@@ -110,11 +113,11 @@ async function runComplianceTest() {
   resultBox.textContent = "Running compliance test...";
 
   try {
-    const result = await api("/api/compliance/evaluate", {
+    const result = await api("/api/compliance/evaluate-standard", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        controlId,
+        standard,
         provider,
         repoName: selectedRepo
       })
@@ -127,14 +130,48 @@ async function runComplianceTest() {
 }
 
 disconnectBtn.addEventListener("click", async () => {
-  await api(`/api/auth/${provider}/disconnect`, { method: "POST" });
-  repoSelect.value = "";
-  complianceSelect.value = "";
-  updateComplianceVisibility();
-  await Promise.all([refreshStatus(), loadRepos()]);
+  await handleLogout("Disconnected.");
 });
 
 repoSelect.addEventListener("change", updateComplianceVisibility);
 runComplianceTestBtn.addEventListener("click", runComplianceTest);
 
 Promise.all([refreshStatus(), loadRepos()]);
+
+function resetLogoutTimer() {
+  if (logoutTimerId) {
+    clearTimeout(logoutTimerId);
+  }
+  logoutTimerId = window.setTimeout(() => {
+    handleLogout("Session expired. You have been logged out.");
+  }, AUTO_LOGOUT_MS);
+}
+
+async function handleLogout(message) {
+  if (logoutInProgress) {
+    return;
+  }
+  logoutInProgress = true;
+  if (logoutTimerId) {
+    clearTimeout(logoutTimerId);
+    logoutTimerId = null;
+  }
+
+  try {
+    await api(`/api/auth/${provider}/disconnect`, { method: "POST" });
+  } catch (error) {
+    console.error(error);
+  } finally {
+    repoSelect.value = "";
+    complianceSelect.value = "";
+    updateComplianceVisibility();
+    await refreshStatus();
+    alert(message);
+    window.location.href = "/";
+  }
+}
+
+["click", "keydown", "mousemove", "scroll"].forEach((eventName) => {
+  window.addEventListener(eventName, resetLogoutTimer, { passive: true });
+});
+resetLogoutTimer();

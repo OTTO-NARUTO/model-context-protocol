@@ -2,43 +2,76 @@ import { randomUUID } from "crypto";
 import { env } from "../../config/env.js";
 
 export class McpClient {
-  async callTool(provider, toolName, params, token) {
+  async sendRequest(provider, method, params = {}, token) {
     const url = this.getMcpUrl(provider);
     if (!url) {
       throw new Error(`MCP URL is not configured for provider ${provider}.`);
     }
+
+    const requestId = randomUUID();
+    const headers = {
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream"
+    };
+
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: requestId,
+        method,
+        params
+      })
+    });
+
+    const text = await response.text();
+    console.log("RAW MCP TEXT:", text);
+    if (!response.ok) {
+      throw new Error(`MCP request failed (${response.status}): ${text}`);
+    }
+
+    const parsed = this.parseJsonOrSse(text);
+    console.log("RAW MCP PARSED:", JSON.stringify(parsed, null, 2));
+    if (parsed?.error && typeof parsed.error === "object") {
+      const message = typeof parsed.error.message === "string" ? parsed.error.message : "MCP returned error";
+      throw new Error(message);
+    }
+
+    return parsed?.result ?? parsed;
+  }
+
+  async callTool(provider, toolName, params, token) {
     if (!token) {
       throw new Error("Missing provider access token.");
     }
 
     const requestId = randomUUID();
-
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json, text/event-stream",
-        Authorization: `Bearer ${token}`
+    const parsed = await this.sendRequest(
+      provider,
+      "tools/call",
+      {
+        name: toolName,
+        arguments: params ?? {},
+        stream: false
       },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: requestId,
-        method: "tools/call",
-        params: {
-          name: toolName,
-          arguments: params ?? {},
-          stream: false
-        }
-      })
-    });
-
-    const text = await response.text();
-    if (!response.ok) {
-      throw new Error(`MCP tool call failed (${response.status}): ${text}`);
-    }
-
-    const parsed = this.parseJsonOrSse(text);
+      token
+    );
     return this.normalizeResponse(parsed, requestId);
+  }
+
+  async listTools(provider, token) {
+    const result = await this.sendRequest(provider, "tools/list", {}, token);
+    const tools = Array.isArray(result?.tools) ? result.tools : [];
+
+    return tools.map((tool) => ({
+      name: String(tool?.name ?? ""),
+      description: String(tool?.description ?? "")
+    }));
   }
 
   getMcpUrl(provider) {

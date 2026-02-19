@@ -12,8 +12,28 @@ const evaluateSchema = z.object({
   })
 });
 
+const evaluateStandardSchema = z.object({
+  params: z.object({}).optional().default({}),
+  query: z.object({}).optional().default({}),
+  body: z.object({
+    standard: z.string().min(1),
+    provider: z.string().min(1),
+    repoName: z.string().min(1)
+  })
+});
+
+const debugToolsSchema = z.object({
+  params: z.object({
+    provider: z.string().min(1)
+  }),
+  query: z.object({}).optional().default({}),
+  body: z.object({}).optional().default({})
+});
+
 export function buildComplianceRoutes(controller) {
   const router = Router();
+  router.get("/debug/:provider", validate(debugToolsSchema), controller.debugTools);
   router.post("/evaluate", validate(evaluateSchema), controller.evaluateControl);
+  router.post("/evaluate-standard", validate(evaluateStandardSchema), controller.evaluateStandard);
   return router;
 }

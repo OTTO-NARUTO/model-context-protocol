@@ -2,7 +2,7 @@ import { env } from "../../config/env.js";
 
 export const oauthProviders = {
   github: {
-    authorizeUrl: "https://github.com/login/oauth/authorize",
+    authorizeUrl: "https://github.com/login/oauth/authorize?force_verify=true&prompt=consent",
     tokenUrl: "https://github.com/login/oauth/access_token",
     reposApiUrl: "https://api.github.com/user/repos?per_page=100&sort=updated",
     clientId: env.GITHUB_CLIENT_ID,
