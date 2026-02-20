@@ -18,7 +18,14 @@ const evaluateStandardSchema = z.object({
   body: z.object({
     standard: z.string().min(1),
     provider: z.string().min(1),
-    repoName: z.string().min(1)
+    repoName: z.string().min(1).optional(),
+    repoNames: z.array(z.string().min(1)).min(1).optional()
+  }).refine((body) => {
+    const hasSingle = typeof body.repoName === "string" && body.repoName.trim().length > 0;
+    const hasMulti = Array.isArray(body.repoNames) && body.repoNames.length > 0;
+    return hasSingle || hasMulti;
+  }, {
+    message: "Provide repoName or repoNames with at least one repository."
   })
 });
 

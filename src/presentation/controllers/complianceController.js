@@ -42,6 +42,21 @@ function getControlEntry(controlId) {
   return allMappings.find((item) => String(item?.control_id ?? "") === String(controlId));
 }
 
+function normalizeRepoNames(repoName, repoNames) {
+  const repos = Array.isArray(repoNames)
+    ? repoNames
+    : (repoName ? [repoName] : []);
+
+  return repos
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean);
+}
+
+function parseRepoCoordinates(fullRepoName) {
+  const [owner, repo] = String(fullRepoName ?? "").split("/");
+  return { owner, repo };
+}
+
 export class ComplianceController {
   constructor(oauthService, mcpClient) {
     this.oauthService = oauthService;
@@ -85,7 +100,13 @@ export class ComplianceController {
       );
 
       const evidencePayload = evidence?.raw ?? evidence?.standardized ?? evidence;
-      const verdict = evaluationEngine.evaluate(controlId, evidencePayload);
+      const verdict = evaluationEngine.evaluate(controlId, evidencePayload, {
+        controlId,
+        controlName: plan.control_name,
+        question: plan.question,
+        evidenceSource: plan.evidence_source,
+        toolName
+      });
 
       res.json({
         control: controlId,
@@ -108,17 +129,26 @@ export class ComplianceController {
   };
 
   evaluateStandard = async (req, res) => {
-    const { standard, provider, repoName } = req.body ?? {};
+    const { standard, provider, repoName, repoNames } = req.body ?? {};
     const normalizedStandard = String(standard ?? "").toUpperCase();
-    const [owner, repo] = String(repoName ?? "").split("/");
+    const normalizedRepos = normalizeRepoNames(repoName, repoNames);
 
     try {
       if (!isProvider(provider)) {
         res.status(400).json({ error: "Invalid provider." });
         return;
       }
-      if (!owner || !repo) {
-        res.status(400).json({ error: "repoName must be in 'owner/repo' format" });
+      if (normalizedRepos.length === 0) {
+        res.status(400).json({ error: "repoName or repoNames is required." });
+        return;
+      }
+
+      const invalidRepo = normalizedRepos.find((fullRepoName) => {
+        const { owner, repo } = parseRepoCoordinates(fullRepoName);
+        return !owner || !repo;
+      });
+      if (invalidRepo) {
+        res.status(400).json({ error: `Invalid repository '${invalidRepo}'. Expected 'owner/repo' format.` });
         return;
       }
 
@@ -132,57 +162,71 @@ export class ComplianceController {
       const token = await this.oauthService.getAccessToken(provider, tenantId);
 
       const results = [];
-      for (const item of mappings) {
-        try {
-          const toolName = resolveToolName(item.mcp_tool, provider);
-          if (!toolName) {
-            throw new Error(`No ${provider} tool mapped for control ${item.control_id}.`);
+      for (const fullRepoName of normalizedRepos) {
+        const { owner, repo } = parseRepoCoordinates(fullRepoName);
+
+        for (const item of mappings) {
+          try {
+            const toolName = resolveToolName(item.mcp_tool, provider);
+            if (!toolName) {
+              throw new Error(`No ${provider} tool mapped for control ${item.control_id}.`);
+            }
+
+            const evidence = await this.mcpClient.callTool(
+              provider,
+              toolName,
+              { owner, repo },
+              token
+            );
+
+            const evidencePayload = evidence?.raw ?? evidence?.standardized ?? evidence;
+            const verdict = evaluationEngine.evaluate(item.control_id, evidencePayload, {
+              controlId: item.control_id,
+              controlName: item.control_name,
+              question: item.question,
+              evidenceSource: item.evidence_source,
+              toolName
+            });
+
+            results.push({
+              repository: fullRepoName,
+              control: item.control_id,
+              description: item.control_name,
+              question: item.question,
+              answer: verdict.answer,
+              evidence_source: item.evidence_source,
+              tool_used: toolName,
+              status: verdict.status,
+              findings: verdict.findings,
+              metadata: verdict.metadata,
+              traceId: evidence?.traceId ?? randomUUID()
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "Evaluation failed.";
+            results.push({
+              repository: fullRepoName,
+              control: item.control_id,
+              description: item.control_name,
+              question: item.question,
+              answer: "Unable to determine due to evaluation error.",
+              evidence_source: item.evidence_source,
+              tool_used: resolveToolName(item.mcp_tool, provider),
+              status: "ERROR",
+              findings: message,
+              metadata: { error: true },
+              traceId: randomUUID()
+            });
           }
-
-          const evidence = await this.mcpClient.callTool(
-            provider,
-            toolName,
-            { owner, repo },
-            token
-          );
-
-          const evidencePayload = evidence?.raw ?? evidence?.standardized ?? evidence;
-          const verdict = evaluationEngine.evaluate(item.control_id, evidencePayload);
-
-          results.push({
-            control: item.control_id,
-            description: item.control_name,
-            question: item.question,
-            answer: verdict.answer,
-            evidence_source: item.evidence_source,
-            tool_used: toolName,
-            status: verdict.status,
-            findings: verdict.findings,
-            metadata: verdict.metadata,
-            traceId: evidence?.traceId ?? randomUUID()
-          });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : "Evaluation failed.";
-          results.push({
-            control: item.control_id,
-            description: item.control_name,
-            question: item.question,
-            answer: "Unable to determine due to evaluation error.",
-            evidence_source: item.evidence_source,
-            tool_used: resolveToolName(item.mcp_tool, provider),
-            status: "ERROR",
-            findings: message,
-            metadata: { error: true },
-            traceId: randomUUID()
-          });
         }
       }
 
       res.json({
         standard: normalizedStandard,
-        repository: `${owner}/${repo}`,
+        repository: normalizedRepos.length === 1 ? normalizedRepos[0] : undefined,
+        repositories: normalizedRepos,
         timestamp: new Date().toISOString(),
         summary: {
+          repositories: normalizedRepos.length,
           total: results.length,
           compliant: results.filter((item) => item.status === "COMPLIANT").length,
           non_compliant: results.filter((item) => item.status === "NON_COMPLIANT").length,

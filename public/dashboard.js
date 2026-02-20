@@ -2,7 +2,12 @@ const provider = window.location.pathname.split("/").filter(Boolean).pop();
 const dashboardTitle = document.getElementById("dashboardTitle");
 const statusPill = document.getElementById("statusPill");
 const disconnectBtn = document.getElementById("disconnectBtn");
-const repoSelect = document.getElementById("repoSelect");
+const repoPicker = document.getElementById("repoPicker");
+const repoPickerToggle = document.getElementById("repoPickerToggle");
+const repoPickerMenu = document.getElementById("repoPickerMenu");
+const repoPickerList = document.getElementById("repoPickerList");
+const repoSelectAllBtn = document.getElementById("repoSelectAllBtn");
+const repoClearAllBtn = document.getElementById("repoClearAllBtn");
 const complianceSection = document.getElementById("complianceSection");
 const complianceSelect = document.getElementById("complianceSelect");
 const runComplianceTestBtn = document.getElementById("runComplianceTestBtn");
@@ -12,6 +17,8 @@ const SINGLE_TENANT_ID = "tenant-acme";
 const AUTO_LOGOUT_MS = 30 * 60 * 1000;
 let logoutTimerId = null;
 let logoutInProgress = false;
+let availableRepos = [];
+let selectedRepos = new Set();
 
 const complianceStandardMap = {
   iso27001: "ISO27001",
@@ -25,13 +32,67 @@ function tenantHeader() {
 }
 
 function updateComplianceVisibility() {
-  const hasRepo = Boolean(repoSelect.value);
+  const hasRepo = getSelectedRepos().length > 0;
   complianceSection.hidden = !hasRepo;
   if (!hasRepo) {
     complianceSelect.value = "";
     resultSection.hidden = true;
     resultBox.textContent = "No result yet.";
   }
+}
+
+function getSelectedRepos() {
+  return Array.from(selectedRepos);
+}
+
+function setPickerLoading(message) {
+  repoPickerToggle.textContent = message;
+  repoPickerList.innerHTML = "";
+}
+
+function updatePickerSummary() {
+  const total = availableRepos.length;
+  const selected = selectedRepos.size;
+
+  if (total === 0) {
+    repoPickerToggle.textContent = "No repositories found";
+    return;
+  }
+
+  if (selected === 0) {
+    repoPickerToggle.textContent = "Select repositories";
+    return;
+  }
+
+  if (selected === total) {
+    repoPickerToggle.textContent = `All repositories selected (${total})`;
+    return;
+  }
+
+  repoPickerToggle.textContent = `${selected} repository(ies) selected`;
+}
+
+function renderRepoPickerList() {
+  if (availableRepos.length === 0) {
+    repoPickerList.innerHTML = "<div class=\"repo-picker-empty\">No repositories found.</div>";
+    updatePickerSummary();
+    return;
+  }
+
+  const rows = availableRepos.map((name) => {
+    const id = `repo-opt-${name.replaceAll("/", "-").replaceAll(".", "-")}`;
+    const checked = selectedRepos.has(name) ? "checked" : "";
+    const safeName = escapeHtml(name);
+    return `
+      <label class="repo-option" for="${id}">
+        <input id="${id}" type="checkbox" data-repo-name="${safeName}" ${checked} />
+        <span>${safeName}</span>
+      </label>
+    `;
+  }).join("");
+
+  repoPickerList.innerHTML = rows;
+  updatePickerSummary();
 }
 
 async function api(path, options = {}) {
@@ -64,35 +125,40 @@ async function refreshStatus() {
 }
 
 async function loadRepos() {
-  repoSelect.innerHTML = '<option value="">Loading repositories...</option>';
+  setPickerLoading("Loading repositories...");
 
   try {
     const body = await api(`/api/auth/repos/list?provider=${encodeURIComponent(provider)}`);
     const repos = Array.isArray(body.repos) ? body.repos : [];
+    availableRepos = repos
+      .map((repo) => String(repo?.name ?? "").trim())
+      .filter(Boolean);
+    selectedRepos = new Set(availableRepos);
 
-    if (repos.length === 0) {
-      repoSelect.innerHTML = '<option value="">No repositories found</option>';
+    if (availableRepos.length === 0) {
+      renderRepoPickerList();
       updateComplianceVisibility();
       return;
     }
 
-    const options = repos.map((repo) => `<option value="${repo.name}">${repo.name}</option>`).join("");
-    repoSelect.innerHTML = `<option value="">Select repository</option>${options}`;
+    renderRepoPickerList();
     updateComplianceVisibility();
   } catch (error) {
-    repoSelect.innerHTML = '<option value="">Connect provider to load repositories</option>';
+    availableRepos = [];
+    selectedRepos = new Set();
+    setPickerLoading("Connect provider to load repositories");
     updateComplianceVisibility();
     console.error(error);
   }
 }
 
 async function runComplianceTest() {
-  const selectedRepo = repoSelect.value;
+  const selectedRepos = getSelectedRepos();
   const selectedCompliance = complianceSelect.value;
 
-  if (!selectedRepo) {
+  if (selectedRepos.length === 0) {
     resultSection.hidden = false;
-    resultBox.textContent = "Select a repository first.";
+    resultBox.textContent = "Select at least one repository first.";
     return;
   }
 
@@ -119,21 +185,134 @@ async function runComplianceTest() {
       body: JSON.stringify({
         standard,
         provider,
-        repoName: selectedRepo
+        repoNames: selectedRepos
       })
     });
 
-    resultBox.textContent = JSON.stringify(result, null, 2);
+    renderResultTable(result);
   } catch (error) {
     resultBox.textContent = String(error);
   }
+}
+
+function renderResultTable(result) {
+  const rows = Array.isArray(result?.results) ? result.results : [];
+  if (rows.length === 0) {
+    resultBox.textContent = "No control results found.";
+    return;
+  }
+
+  const tableRows = rows.map((item) => {
+    const repository = escapeHtml(String(item?.repository ?? result?.repository ?? "-"));
+    const controlId = escapeHtml(String(item?.control ?? "-"));
+    const controlName = escapeHtml(String(item?.description ?? item?.control_name ?? "-"));
+    const component = escapeHtml(String(item?.component ?? item?.control_component ?? item?.evidence_source ?? "-"));
+    const status = String(item?.status ?? "UNDETERMINED").toUpperCase();
+    const statusClass = statusToClass(status);
+
+    return `
+      <tr>
+        <td>${controlId}</td>
+        <td>${controlName}</td>
+        <td>${component}</td>
+        <td><span class="status-chip ${statusClass}">${escapeHtml(status)}</span></td>
+        <td>${repository}</td>
+      </tr>
+    `;
+  }).join("");
+
+  resultBox.innerHTML = `
+    <div class="table-wrap">
+      <table class="result-table">
+        <thead>
+          <tr>
+            <th>Control ID</th>
+            <th>Control Name</th>
+            <th>Control Component</th>
+            <th>Status</th>
+            <th>Repository</th>
+          </tr>
+        </thead>
+        <tbody>${tableRows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function statusToClass(status) {
+  if (status === "COMPLIANT") return "ok";
+  if (status === "NON_COMPLIANT") return "bad";
+  if (status === "ERROR") return "err";
+  return "unknown";
+}
+
+function escapeHtml(value) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 disconnectBtn.addEventListener("click", async () => {
   await handleLogout("Disconnected.");
 });
 
-repoSelect.addEventListener("change", updateComplianceVisibility);
+repoPickerToggle.addEventListener("click", () => {
+  if (repoPickerMenu.hidden) {
+    repoPickerMenu.hidden = false;
+    repoPicker.classList.add("open");
+  } else {
+    repoPickerMenu.hidden = true;
+    repoPicker.classList.remove("open");
+  }
+});
+
+repoPickerList.addEventListener("change", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement)) {
+    return;
+  }
+  if (target.type !== "checkbox") {
+    return;
+  }
+
+  const repoName = target.dataset.repoName;
+  if (!repoName) {
+    return;
+  }
+
+  if (target.checked) {
+    selectedRepos.add(repoName);
+  } else {
+    selectedRepos.delete(repoName);
+  }
+
+  updatePickerSummary();
+  updateComplianceVisibility();
+});
+
+repoSelectAllBtn.addEventListener("click", () => {
+  selectedRepos = new Set(availableRepos);
+  renderRepoPickerList();
+  updateComplianceVisibility();
+});
+
+repoClearAllBtn.addEventListener("click", () => {
+  selectedRepos = new Set();
+  renderRepoPickerList();
+  updateComplianceVisibility();
+});
+
+document.addEventListener("click", (event) => {
+  if (repoPicker.contains(event.target)) {
+    return;
+  }
+  repoPickerMenu.hidden = true;
+  repoPicker.classList.remove("open");
+});
+
 runComplianceTestBtn.addEventListener("click", runComplianceTest);
 
 Promise.all([refreshStatus(), loadRepos()]);
@@ -162,7 +341,9 @@ async function handleLogout(message) {
   } catch (error) {
     console.error(error);
   } finally {
-    repoSelect.value = "";
+    availableRepos = [];
+    selectedRepos = new Set();
+    setPickerLoading("No repositories selected");
     complianceSelect.value = "";
     updateComplianceVisibility();
     await refreshStatus();
