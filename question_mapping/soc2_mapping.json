@@ -1,0 +1,62 @@
+[
+  {
+    "control_id": "CC6.1",
+    "control_name": "Logical access security",
+    "question": "Is logical access to repositories limited and regularly reviewed?",
+    "mcp_tool": {
+      "github": "list_collaborators",
+      "gitlab": "list_project_members",
+      "bitbucket": "bb_ls_users"
+    },
+    "evidence_source": "identity_scan",
+    "required_args": ["owner", "repo"]
+  },
+  {
+    "control_id": "CC6.2",
+    "control_name": "User access provisioning and deprovisioning",
+    "question": "Are user access changes to repositories managed through defined provisioning and deprovisioning controls?",
+    "mcp_tool": {
+      "github": "list_collaborators",
+      "gitlab": "list_project_members",
+      "bitbucket": "bb_ls_users"
+    },
+    "evidence_source": "identity_scan",
+    "required_args": ["owner", "repo"]
+  },
+  {
+    "control_id": "CC7.2",
+    "control_name": "Change management process",
+    "question": "Are code changes tracked and reviewed through pull/merge request workflows?",
+    "mcp_tool": {
+      "github": "list_pull_requests",
+      "gitlab": "list_merge_requests",
+      "bitbucket": "list_pullrequests"
+    },
+    "evidence_source": "code_repo_scan",
+    "required_args": ["owner", "repo"]
+  },
+  {
+    "control_id": "CC7.3",
+    "control_name": "Monitoring of changes",
+    "question": "Are branch protection and change monitoring controls active for critical branches?",
+    "mcp_tool": {
+      "github": "get_branch_protection",
+      "gitlab": "get_project_protected_branches",
+      "bitbucket": "list_branch_restrictions"
+    },
+    "evidence_source": "code_repo_scan",
+    "required_args": ["owner", "repo"]
+  },
+  {
+    "control_id": "CC8.1",
+    "control_name": "System monitoring and vulnerability management",
+    "question": "Are repository vulnerability alerts available and monitored?",
+    "mcp_tool": {
+      "github": "list_dependabot_alerts",
+      "gitlab": "list_vulnerability_findings",
+      "bitbucket": "bb_list_vulnerabilities"
+    },
+    "evidence_source": "vapt_scan",
+    "required_args": ["owner", "repo"]
+  }
+]

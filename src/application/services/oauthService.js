@@ -72,7 +72,20 @@ export class OAuthService {
   }
 
   async disconnect(provider, tenantId) {
-    await this.db.deleteToken(tenantId, provider);
+    const tokenRecord = await this.db.getToken(tenantId, provider);
+    if (!tokenRecord) {
+      return;
+    }
+
+    const accessToken = this.encryption.decrypt(tokenRecord.accessTokenEncrypted);
+
+    try {
+      await this.revokeProviderToken(provider, accessToken);
+    } catch {
+      // Best-effort revoke: always clear local token even if provider revoke fails.
+    } finally {
+      await this.db.deleteToken(tenantId, provider);
+    }
   }
 
   async status(provider, tenantId) {
@@ -173,6 +186,51 @@ export class OAuthService {
     }
 
     throw new Error(`Unsupported OAuth token response format: ${contentType || "unknown content-type"}`);
+  }
+
+  async revokeProviderToken(provider, accessToken) {
+    const config = oauthProviders[provider];
+
+    if (provider === "github") {
+      await fetch(`https://api.github.com/applications/${config.clientId}/token`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Basic ${Buffer.from(`${config.clientId}:${config.clientSecret}`).toString("base64")}`,
+          Accept: "application/vnd.github+json",
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ access_token: accessToken })
+      });
+      return;
+    }
+
+    if (provider === "gitlab") {
+      await fetch("https://gitlab.com/oauth/revoke", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded"
+        },
+        body: new URLSearchParams({
+          token: accessToken,
+          client_id: config.clientId,
+          client_secret: config.clientSecret
+        })
+      });
+      return;
+    }
+
+    if (provider === "bitbucket") {
+      await fetch("https://bitbucket.org/site/oauth2/revoke", {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${Buffer.from(`${config.clientId}:${config.clientSecret}`).toString("base64")}`,
+          "Content-Type": "application/x-www-form-urlencoded"
+        },
+        body: new URLSearchParams({
+          token: accessToken
+        })
+      });
+    }
   }
 }
 

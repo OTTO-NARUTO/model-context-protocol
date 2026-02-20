@@ -20,16 +20,23 @@
             <span id="statusPill" class="status-pill disconnected">Disconnected</span>
           </div>
         </div>
-        <button id="disconnectBtn" class="secondary">Disconnect</button>
+        <button id="disconnectBtn" class="secondary">Logout</button>
       </section>
 
       <section class="panel">
         <h2>Repository</h2>
         <label>
           Repo Selector
-          <select id="repoSelect">
-            <option value="">Select repository</option>
-          </select>
+          <div class="repo-picker" id="repoPicker">
+            <button id="repoPickerToggle" type="button" class="repo-picker-toggle">Loading repositories...</button>
+            <div id="repoPickerMenu" class="repo-picker-menu" hidden>
+              <div class="repo-picker-actions">
+                <button id="repoSelectAllBtn" type="button" class="secondary">Select all</button>
+                <button id="repoClearAllBtn" type="button" class="secondary">Clear</button>
+              </div>
+              <div id="repoPickerList" class="repo-picker-list"></div>
+            </div>
+          </div>
         </label>
       </section>
 
@@ -48,7 +55,7 @@
 
       <section id="resultSection" class="panel" hidden>
         <h2>Test Result</h2>
-        <pre id="resultBox">No result yet.</pre>
+        <div id="resultBox" class="result-box">No result yet.</div>
       </section>
     </main>
     <script type="module" src="/dashboard.js"></script>

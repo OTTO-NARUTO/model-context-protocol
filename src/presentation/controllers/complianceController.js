@@ -1,24 +1,61 @@
 import path from "path";
 import { fileURLToPath } from "url";
-import { readFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
+import { randomUUID } from "crypto";
 import { isProvider } from "../../domain/entities/provider.js";
-import EvidenceMappingTool from "../../application/services/EvidenceMappingTool.js";
 import EvaluationEngine from "../../application/services/EvaluationEngine.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const projectRoot = path.resolve(__dirname, "../../../");
 
-function readJson(relativePath) {
-  const fullPath = path.resolve(projectRoot, relativePath);
-  const raw = readFileSync(fullPath, "utf-8");
-  return JSON.parse(raw);
+const evaluationEngine = new EvaluationEngine();
+
+function getMapping(standard) {
+  const fileName = String(standard ?? "").toLowerCase() === "iso27001"
+    ? "iso27001_mapping.json"
+    : "soc2_mapping.json";
+
+  const filePath = path.join(projectRoot, "question_mapping", fileName);
+  if (!existsSync(filePath)) {
+    throw new Error(`Mapping file not found at: ${filePath}`);
+  }
+
+  return JSON.parse(readFileSync(filePath, "utf-8"));
 }
 
-const isoData = readJson("compliance/mcp-tool-mapping/ISO27001_Repo_Controls.json");
-const socData = readJson("compliance/mcp-tool-mapping/SOC2_Repo_Controls.json");
-const mapper = new EvidenceMappingTool(isoData, socData);
-const evaluationEngine = new EvaluationEngine();
+function resolveToolName(mcpTool, provider) {
+  if (typeof mcpTool === "string") {
+    return mcpTool;
+  }
+
+  if (mcpTool && typeof mcpTool === "object") {
+    const value = mcpTool[String(provider ?? "").toLowerCase()];
+    return typeof value === "string" ? value : "";
+  }
+
+  return "";
+}
+
+function getControlEntry(controlId) {
+  const allMappings = [...getMapping("iso27001"), ...getMapping("soc2")];
+  return allMappings.find((item) => String(item?.control_id ?? "") === String(controlId));
+}
+
+function normalizeRepoNames(repoName, repoNames) {
+  const repos = Array.isArray(repoNames)
+    ? repoNames
+    : (repoName ? [repoName] : []);
+
+  return repos
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean);
+}
+
+function parseRepoCoordinates(fullRepoName) {
+  const [owner, repo] = String(fullRepoName ?? "").split("/");
+  return { owner, repo };
+}
 
 export class ComplianceController {
   constructor(oauthService, mcpClient) {
@@ -28,32 +65,56 @@ export class ComplianceController {
 
   evaluateControl = async (req, res) => {
     const { controlId, provider, repoName } = req.body ?? {};
+    const [owner, repo] = String(repoName ?? "").split("/");
 
     try {
       if (!isProvider(provider)) {
         res.status(400).json({ error: "Invalid provider." });
         return;
       }
+      if (!owner || !repo) {
+        res.status(400).json({ error: "repoName must be in 'owner/repo' format" });
+        return;
+      }
 
       const tenantId = req.tenantId;
-      const plan = mapper.getMapping(controlId, provider);
+      const plan = getControlEntry(controlId);
+      if (!plan) {
+        res.status(404).json({ error: `Control ${controlId} not found in question_mapping files.` });
+        return;
+      }
+
+      const toolName = resolveToolName(plan.mcp_tool, provider);
+      if (!toolName) {
+        res.status(400).json({ error: `No ${provider} tool mapped for control ${controlId}.` });
+        return;
+      }
+
       const token = await this.oauthService.getAccessToken(provider, tenantId);
 
       const evidence = await this.mcpClient.callTool(
         provider,
-        plan.mcpMethod,
-        { repo: repoName, ...plan.params },
+        toolName,
+        { owner, repo },
         token
       );
 
       const evidencePayload = evidence?.raw ?? evidence?.standardized ?? evidence;
-      const verdict = evaluationEngine.evaluate(controlId, evidencePayload);
+      const verdict = evaluationEngine.evaluate(controlId, evidencePayload, {
+        controlId,
+        controlName: plan.control_name,
+        question: plan.question,
+        evidenceSource: plan.evidence_source,
+        toolName
+      });
 
       res.json({
         control: controlId,
-        description: plan.controlName,
-        evidence_source: plan.evidenceSource,
-        tool_used: plan.mcpMethod,
+        description: plan.control_name,
+        question: plan.question,
+        answer: verdict.answer,
+        evidence_source: plan.evidence_source,
+        tool_used: toolName,
         status: verdict.status,
         findings: verdict.findings,
         metadata: verdict.metadata,
@@ -63,6 +124,139 @@ export class ComplianceController {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Evaluation failed.";
       const code = message.includes("No OAuth token found") ? 401 : 400;
+      res.status(code).json({ error: message });
+    }
+  };
+
+  evaluateStandard = async (req, res) => {
+    const { standard, provider, repoName, repoNames } = req.body ?? {};
+    const normalizedStandard = String(standard ?? "").toUpperCase();
+    const normalizedRepos = normalizeRepoNames(repoName, repoNames);
+
+    try {
+      if (!isProvider(provider)) {
+        res.status(400).json({ error: "Invalid provider." });
+        return;
+      }
+      if (normalizedRepos.length === 0) {
+        res.status(400).json({ error: "repoName or repoNames is required." });
+        return;
+      }
+
+      const invalidRepo = normalizedRepos.find((fullRepoName) => {
+        const { owner, repo } = parseRepoCoordinates(fullRepoName);
+        return !owner || !repo;
+      });
+      if (invalidRepo) {
+        res.status(400).json({ error: `Invalid repository '${invalidRepo}'. Expected 'owner/repo' format.` });
+        return;
+      }
+
+      const mappings = getMapping(normalizedStandard);
+      if (mappings.length === 0) {
+        res.status(404).json({ error: `No repo-related controls found for ${normalizedStandard}` });
+        return;
+      }
+
+      const tenantId = req.tenantId;
+      const token = await this.oauthService.getAccessToken(provider, tenantId);
+
+      const results = [];
+      for (const fullRepoName of normalizedRepos) {
+        const { owner, repo } = parseRepoCoordinates(fullRepoName);
+
+        for (const item of mappings) {
+          try {
+            const toolName = resolveToolName(item.mcp_tool, provider);
+            if (!toolName) {
+              throw new Error(`No ${provider} tool mapped for control ${item.control_id}.`);
+            }
+
+            const evidence = await this.mcpClient.callTool(
+              provider,
+              toolName,
+              { owner, repo },
+              token
+            );
+
+            const evidencePayload = evidence?.raw ?? evidence?.standardized ?? evidence;
+            const verdict = evaluationEngine.evaluate(item.control_id, evidencePayload, {
+              controlId: item.control_id,
+              controlName: item.control_name,
+              question: item.question,
+              evidenceSource: item.evidence_source,
+              toolName
+            });
+
+            results.push({
+              repository: fullRepoName,
+              control: item.control_id,
+              description: item.control_name,
+              question: item.question,
+              answer: verdict.answer,
+              evidence_source: item.evidence_source,
+              tool_used: toolName,
+              status: verdict.status,
+              findings: verdict.findings,
+              metadata: verdict.metadata,
+              traceId: evidence?.traceId ?? randomUUID()
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "Evaluation failed.";
+            results.push({
+              repository: fullRepoName,
+              control: item.control_id,
+              description: item.control_name,
+              question: item.question,
+              answer: "Unable to determine due to evaluation error.",
+              evidence_source: item.evidence_source,
+              tool_used: resolveToolName(item.mcp_tool, provider),
+              status: "ERROR",
+              findings: message,
+              metadata: { error: true },
+              traceId: randomUUID()
+            });
+          }
+        }
+      }
+
+      res.json({
+        standard: normalizedStandard,
+        repository: normalizedRepos.length === 1 ? normalizedRepos[0] : undefined,
+        repositories: normalizedRepos,
+        timestamp: new Date().toISOString(),
+        summary: {
+          repositories: normalizedRepos.length,
+          total: results.length,
+          compliant: results.filter((item) => item.status === "COMPLIANT").length,
+          non_compliant: results.filter((item) => item.status === "NON_COMPLIANT").length,
+          errors: results.filter((item) => item.status === "ERROR").length
+        },
+        results
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Evaluation failed.";
+      const code = message.includes("No OAuth token found") ? 401 : 400;
+      res.status(code).json({ error: message });
+    }
+  };
+
+  debugTools = async (req, res) => {
+    const provider = String(req.params.provider ?? "");
+
+    try {
+      if (!isProvider(provider)) {
+        res.status(400).json({ error: "Invalid provider." });
+        return;
+      }
+
+      const tenantId = req.tenantId;
+      const token = await this.oauthService.getAccessToken(provider, tenantId);
+      const tools = await this.mcpClient.listTools(provider, token);
+      res.json({ provider, tools });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Tool discovery failed.";
+      const code = message.includes("No OAuth token found") ? 401 : 500;
       res.status(code).json({ error: message });
     }
   };

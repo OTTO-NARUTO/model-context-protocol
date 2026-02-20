@@ -126,11 +126,129 @@ button.secondary {
   margin-top: 8px;
 }
 
-pre {
+.repo-picker {
+  position: relative;
+}
+
+.repo-picker-toggle {
+  width: 100%;
+  text-align: left;
+  background: #fff;
+  color: var(--text);
+  border: 1px solid #b6b2a7;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.repo-picker.open .repo-picker-toggle {
+  border-color: #4f8b88;
+  box-shadow: 0 0 0 3px rgba(79, 139, 136, 0.15);
+}
+
+.repo-picker-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  background: #fff;
+  border: 1px solid #d6cfbf;
+  border-radius: 12px;
+  box-shadow: 0 10px 24px rgba(24, 36, 35, 0.16);
+  padding: 10px;
+}
+
+.repo-picker-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.repo-picker-actions button {
+  font-size: 12px;
+  padding: 6px 10px;
+}
+
+.repo-picker-list {
+  max-height: 260px;
+  overflow-y: auto;
+  display: grid;
+  gap: 4px;
+}
+
+.repo-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.repo-option:hover {
+  background: #f1f7f6;
+}
+
+.repo-option input[type="checkbox"] {
   margin: 0;
-  white-space: pre-wrap;
+}
+
+.repo-picker-empty {
+  color: #6f6a60;
+  font-size: 13px;
+  padding: 8px;
+}
+
+.result-box {
+  margin: 0;
+  white-space: normal;
   background: #f5f2ea;
   border-radius: 8px;
   padding: 12px;
   min-height: 120px;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+.result-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.result-table th,
+.result-table td {
+  text-align: left;
+  border-bottom: 1px solid #d9d2c5;
+  padding: 10px 8px;
+  font-size: 14px;
+}
+
+.result-table th {
+  font-weight: 700;
+}
+
+.status-chip {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.status-chip.ok {
+  background: #d9f2df;
+  color: var(--ok);
+}
+
+.status-chip.bad,
+.status-chip.err {
+  background: #fde3e4;
+  color: var(--danger);
+}
+
+.status-chip.unknown {
+  background: #ece7da;
+  color: #5b574d;
 }
