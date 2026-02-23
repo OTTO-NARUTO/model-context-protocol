@@ -202,7 +202,8 @@ function renderResultTable(result) {
     return;
   }
 
-  const tableRows = rows.map((item) => {
+  const questionRows = rows.map((item) => {
+    const question = escapeHtml(String(item?.question ?? "-"));
     const repository = escapeHtml(String(item?.repository ?? result?.repository ?? "-"));
     const controlId = escapeHtml(String(item?.control ?? "-"));
     const controlName = escapeHtml(String(item?.description ?? item?.control_name ?? "-"));
@@ -212,6 +213,7 @@ function renderResultTable(result) {
 
     return `
       <tr>
+        <td>${question}</td>
         <td>${controlId}</td>
         <td>${controlName}</td>
         <td>${component}</td>
@@ -221,22 +223,108 @@ function renderResultTable(result) {
     `;
   }).join("");
 
+  const statusOrder = ["COMPLIANT", "NON_COMPLIANT", "ERROR", "UNDETERMINED"];
+  const statusCounts = new Map(statusOrder.map((status) => [status, 0]));
+
+  for (const item of rows) {
+    const status = String(item?.status ?? "UNDETERMINED").toUpperCase();
+    if (statusCounts.has(status)) {
+      statusCounts.set(status, Number(statusCounts.get(status) ?? 0) + 1);
+    } else {
+      statusCounts.set(status, 1);
+    }
+  }
+
+  const complianceSummary = Array.from(statusCounts.entries()).map(([status, count]) => {
+    const statusClass = statusToClass(status);
+    return `
+      <div class="compliance-card">
+        <div class="compliance-card-title">${escapeHtml(status.replaceAll("_", " "))}</div>
+        <div class="compliance-card-value"><span class="status-chip ${statusClass}">${escapeHtml(String(count))}</span></div>
+      </div>
+    `;
+  }).join("");
+
+  const complianceRows = rows.map((item) => {
+    const repository = escapeHtml(String(item?.repository ?? result?.repository ?? "-"));
+    const controlId = escapeHtml(String(item?.control ?? "-"));
+    const standard = escapeHtml(String(result?.standard ?? "-"));
+    const status = String(item?.status ?? "UNDETERMINED").toUpperCase();
+    const statusClass = statusToClass(status);
+
+    return `
+      <tr>
+        <td>${standard}</td>
+        <td>${controlId}</td>
+        <td><span class="status-chip ${statusClass}">${escapeHtml(status)}</span></td>
+        <td>${repository}</td>
+      </tr>
+    `;
+  }).join("");
+
   resultBox.innerHTML = `
-    <div class="table-wrap">
-      <table class="result-table">
-        <thead>
-          <tr>
-            <th>Control ID</th>
-            <th>Control Name</th>
-            <th>Control Component</th>
-            <th>Status</th>
-            <th>Repository</th>
-          </tr>
-        </thead>
-        <tbody>${tableRows}</tbody>
-      </table>
+    <div class="result-tabs" role="tablist" aria-label="Result tabs">
+      <button type="button" class="result-tab-btn active" data-tab-target="questions" role="tab" aria-selected="true">By Questions</button>
+      <button type="button" class="result-tab-btn" data-tab-target="compliance" role="tab" aria-selected="false">By Compliance</button>
+    </div>
+
+    <div class="result-tab-panel active" data-tab-panel="questions" role="tabpanel">
+      <div class="table-wrap">
+        <table class="result-table">
+          <thead>
+            <tr>
+              <th>Question</th>
+              <th>Control ID</th>
+              <th>Control Name</th>
+              <th>Control Component</th>
+              <th>Status</th>
+              <th>Repository</th>
+            </tr>
+          </thead>
+          <tbody>${questionRows}</tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="result-tab-panel" data-tab-panel="compliance" role="tabpanel" hidden>
+      <div class="compliance-summary-grid">${complianceSummary}</div>
+      <div class="table-wrap">
+        <table class="result-table">
+          <thead>
+            <tr>
+              <th>Compliance</th>
+              <th>Control ID</th>
+              <th>Status</th>
+              <th>Repository</th>
+            </tr>
+          </thead>
+          <tbody>${complianceRows}</tbody>
+        </table>
+      </div>
     </div>
   `;
+
+  const tabButtons = resultBox.querySelectorAll(".result-tab-btn");
+  const tabPanels = resultBox.querySelectorAll(".result-tab-panel");
+
+  for (const button of tabButtons) {
+    button.addEventListener("click", () => {
+      const target = button.dataset.tabTarget;
+      if (!target) return;
+
+      for (const tabButton of tabButtons) {
+        const isActive = tabButton === button;
+        tabButton.classList.toggle("active", isActive);
+        tabButton.setAttribute("aria-selected", isActive ? "true" : "false");
+      }
+
+      for (const panel of tabPanels) {
+        const isActive = panel.dataset.tabPanel === target;
+        panel.classList.toggle("active", isActive);
+        panel.hidden = !isActive;
+      }
+    });
+  }
 }
 
 function statusToClass(status) {
