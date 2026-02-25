@@ -133,6 +133,12 @@ export class McpClient {
     }
 
     const result = body.result && typeof body.result === "object" ? body.result : body;
+    if (result?.isError) {
+      const blocks = Array.isArray(result?.content) ? result.content : [];
+      const firstText = blocks.find((block) => typeof block?.text === "string");
+      const message = String(firstText?.text ?? "MCP tool returned an error response.");
+      throw new Error(message);
+    }
 
     return {
       traceId: typeof result.traceId === "string" ? result.traceId : requestId,

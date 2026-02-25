@@ -9,9 +9,23 @@
         {
           "evidence_source": "identity_scan",
           "tools": {
-            "github": "get_me",
+            "github": "list_collaborators",
             "gitlab": "list_project_members",
             "bitbucket": "bb_ls_users"
+          },
+          "required_tools": {
+            "github": [
+              "list_collaborators",
+              "get_repository"
+            ]
+          },
+          "logic": {
+            "path": "permissions.admin",
+            "operator": "equals",
+            "expected": true,
+            "requirementType": "count",
+            "threshold": 1,
+            "inverse": false
           }
         }
       ]

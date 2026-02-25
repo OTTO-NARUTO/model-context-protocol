@@ -1,4 +1,4 @@
-// src/application/services/EvaluationEngine.js
+
 export default class EvaluationEngine {
   evaluate(controlId, evidenceData, context = {}) {
     const resolvedContext = {
@@ -8,31 +8,39 @@ export default class EvaluationEngine {
 
     if (this._hasMcpError(evidenceData)) {
       const message = this._extractMcpErrorMessage(evidenceData);
-      return {
+      return this._withComplianceFlag({
         status: "ERROR",
         answer: "Unable to determine due to MCP tool error.",
         findings: `MCP Tool Error: ${message}`,
         metadata: { error: true, controlId: resolvedContext.controlId }
-      };
+      });
     }
 
-    const strategy = this._resolveStrategy(resolvedContext);
     const payload = this._parseMcpContent(evidenceData);
+    const strategy = this._resolveStrategy(resolvedContext, payload);
 
+    let verdict;
     switch (strategy) {
       case "identity":
-        return this.evaluateRepositoryAccessRights(payload, resolvedContext);
+        verdict = this.evaluateRepositoryAccessRights(payload, resolvedContext);
+        break;
       case "branch_protection":
-        return this.evaluateConfigurationManagement(payload, resolvedContext);
+        verdict = this.evaluateConfigurationManagement(payload, resolvedContext);
+        break;
       case "review_process":
-        return this.evaluateSecureCoding(payload, resolvedContext);
+        verdict = this.evaluateSecureCoding(payload, resolvedContext);
+        break;
       case "security_testing":
-        return this.evaluateSecurityTesting(payload, resolvedContext);
+        verdict = this.evaluateSecurityTesting(payload, resolvedContext);
+        break;
       case "vulnerabilities":
-        return this.evaluateVulnerabilities(payload, resolvedContext);
+        verdict = this.evaluateVulnerabilities(payload, resolvedContext);
+        break;
       default:
-        return this.defaultEvaluation(resolvedContext);
+        verdict = this.defaultEvaluation(resolvedContext);
+        break;
     }
+    return this._withComplianceFlag(verdict);
   }
 
   // JUDGE: 8.9 Configuration Management
@@ -110,9 +118,8 @@ export default class EvaluationEngine {
 
   // JUDGE: 5.18 Repository Access
   evaluateRepositoryAccessRights(data, context = {}) {
-    const members = this._asArray(data);
-    const q = String(context?.question ?? "").toLowerCase();
-    const asksLifecycle = q.includes("provision") || q.includes("deprovision") || q.includes("regularly reviewed");
+    const { members, repository, visibility, diagnostics } = this._extractIdentityEvidence(data);
+    const provider = String(context?.provider ?? "").toLowerCase();
 
     if (members.length === 0 && typeof data === "object" && data) {
       const canAdmin = Boolean(data?.permissions?.admin || String(data?.role ?? "").toLowerCase() === "admin");
@@ -130,48 +137,78 @@ export default class EvaluationEngine {
       };
     }
 
-    const normalizedRoles = members.map((member) => this._classifyRole(member)).filter(Boolean);
-    const adminLikeCount = normalizedRoles.filter((role) => ["owner", "admin", "maintainer"].includes(role)).length;
-    const unknownCount = members.length - normalizedRoles.length;
-    const maxAllowedAdminLike = Math.max(2, Math.ceil(members.length * 0.2));
-    const pass = adminLikeCount <= maxAllowedAdminLike && unknownCount === 0;
-
-    if (asksLifecycle) {
-      const lifecycleSignals = members.some((member) => (
-        member?.created_at ||
-        member?.expires_at ||
-        member?.state ||
-        member?.last_activity_at ||
-        member?.last_login
-      ));
-      if (!lifecycleSignals) {
-        return {
-          status: "UNDETERMINED",
-          answer: "Unable to determine provisioning/deprovisioning effectiveness from current evidence.",
-          findings: "Membership snapshot exists, but no lifecycle or review timestamps were found.",
-          metadata: {
-            strategy: "identity",
-            controlId: controlIdFrom(context),
-            totalMembers: members.length,
-            adminLikeCount
-          }
-        };
-      }
+    if (provider === "github" && !visibility.known) {
+      const missingTools = this._asArray(diagnostics?.missingRequiredTools).map((item) => String(item));
+      const missingSummary = missingTools.length > 0
+        ? ` Missing required GitHub tools: ${missingTools.join(", ")}.`
+        : "";
+      return {
+        status: "UNDETERMINED",
+        answer: "Unable to determine repository-level access-rights compliance without repository visibility metadata.",
+        findings: `get_repository evidence was missing or did not include visibility/private fields.${missingSummary}`,
+        metadata: {
+          strategy: "identity",
+          controlId: controlIdFrom(context),
+          totalMembers: members.length,
+          visibilityKnown: false,
+          diagnostics: diagnostics ?? null
+        }
+      };
     }
+
+    const normalizedRoles = members.map((member) => this._classifyRole(member)).filter(Boolean);
+    const knownCount = normalizedRoles.length;
+    const unknownCount = members.length - knownCount;
+    const adminLikeCount = normalizedRoles.filter((role) => ["owner", "admin", "maintainer"].includes(role)).length;
+    const unknownRatio = members.length > 0 ? unknownCount / members.length : 0;
+
+    if (knownCount === 0 || unknownRatio > 0.3) {
+      return {
+        status: "UNDETERMINED",
+        answer: "Unable to determine access-rights compliance due to incomplete role metadata.",
+        findings: `Insufficient role classification data: ${unknownCount}/${members.length} member(s) have unknown role mappings.`,
+        metadata: {
+          strategy: "identity",
+          controlId: controlIdFrom(context),
+          totalMembers: members.length,
+          knownCount,
+          unknownCount,
+          unknownRatio
+        }
+      };
+    }
+
+    const maxAllowedAdminLike = Math.max(1, Math.ceil(knownCount * 0.2));
+    const rolePass = adminLikeCount <= maxAllowedAdminLike;
+    const visibilityPass = visibility.known ? !visibility.isPublic : true;
+    const pass = rolePass && visibilityPass;
+    const lifecycleSignals = members.some((member) => (
+      member?.created_at ||
+      member?.expires_at ||
+      member?.state ||
+      member?.last_activity_at ||
+      member?.last_login
+    ));
 
     return {
       status: pass ? "COMPLIANT" : "NON_COMPLIANT",
       answer: pass
-        ? "Yes. Access roles indicate elevated privileges are limited to a small subset of users."
-        : "No. Access data suggests elevated privileges are too broad or role metadata is incomplete.",
-      findings: `Analyzed ${members.length} member(s): ${adminLikeCount} elevated role(s), ${unknownCount} unknown role(s).`,
+        ? "Yes. Access roles and repository visibility indicate least-privilege expectations are met."
+        : "No. Access evidence indicates either broad elevated privileges or disallowed repository exposure.",
+      findings: `Analyzed ${members.length} member(s): ${adminLikeCount} elevated role(s), ${unknownCount} unknown role(s). Repository visibility: ${visibility.label}.`,
       metadata: {
         strategy: "identity",
         controlId: controlIdFrom(context),
         totalMembers: members.length,
+        knownCount,
         adminLikeCount,
         unknownCount,
-        maxAllowedAdminLike
+        unknownRatio,
+        maxAllowedAdminLike,
+        lifecycleSignals,
+        visibilityKnown: visibility.known,
+        repositoryVisibility: visibility.label,
+        repositoryIsPublic: visibility.isPublic
       }
     };
   }
@@ -220,7 +257,7 @@ export default class EvaluationEngine {
     };
   }
 
-  // JUDGE: 8.29 Security Testing
+  
   evaluateSecurityTesting(data, context = {}) {
     const checks = this._asArray(data);
     if (checks.length === 0) return this.defaultEvaluation(context);
@@ -277,26 +314,51 @@ export default class EvaluationEngine {
     };
   }
 
-  _resolveStrategy(context = {}) {
+  _resolveStrategy(context = {}, payload = null) {
+    const scores = this._strategyScores(context, payload);
+    let winner = "default";
+    let maxScore = 0;
+
+    for (const [strategy, score] of Object.entries(scores)) {
+      if (score > maxScore) {
+        winner = strategy;
+        maxScore = score;
+      }
+    }
+
+    return maxScore > 0 ? winner : "default";
+  }
+
+  _strategyScores(context = {}, payload = null) {
     const evidenceSource = String(context?.evidenceSource ?? "").toLowerCase();
     const toolName = String(context?.toolName ?? "").toLowerCase();
     const question = String(context?.question ?? "").toLowerCase();
+    const profile = this._inferEvidenceProfile(payload);
 
-    if (evidenceSource.includes("identity")) return "identity";
-    if (evidenceSource.includes("vapt") || evidenceSource.includes("vuln")) return "vulnerabilities";
+    const scores = {
+      identity: profile.identitySignals * 3,
+      branch_protection: profile.branchSignals * 3,
+      review_process: profile.pullRequestSignals * 3,
+      security_testing: profile.pipelineSignals * 3,
+      vulnerabilities: profile.vulnerabilitySignals * 3
+    };
+
+    if (evidenceSource.includes("identity")) scores.identity += 3;
+    if (evidenceSource.includes("vapt") || evidenceSource.includes("vuln")) scores.vulnerabilities += 3;
     if (evidenceSource.includes("code_repo")) {
-      if (this._matches(toolName, ["branch", "protect", "restriction"])) return "branch_protection";
-      if (this._matches(toolName, ["pull", "merge_request", "pullrequest"])) return "review_process";
-      if (this._matches(toolName, ["pipeline", "job", "commit", "check"])) return "security_testing";
+      scores.branch_protection += this._matches(toolName, ["branch", "protect", "restriction"]) ? 2 : 0;
+      scores.review_process += this._matches(toolName, ["pull", "merge_request", "pullrequest"]) ? 2 : 0;
+      scores.security_testing += this._matches(toolName, ["pipeline", "job", "commit", "check"]) ? 2 : 0;
     }
 
-    if (this._matches(question, ["access", "least privilege", "provision", "deprovision"])) return "identity";
-    if (this._matches(question, ["vulnerab", "alert"])) return "vulnerabilities";
-    if (this._matches(question, ["branch protection", "branch", "configuration"])) return "branch_protection";
-    if (this._matches(question, ["pull request", "merge request", "review", "approved"])) return "review_process";
-    if (this._matches(question, ["pipeline", "ci/cd", "security check", "commit"])) return "security_testing";
+    // Question hints are weak tie-breakers only.
+    scores.identity += this._matches(question, ["access", "least privilege", "provision", "deprovision"]) ? 1 : 0;
+    scores.vulnerabilities += this._matches(question, ["vulnerab", "alert"]) ? 1 : 0;
+    scores.branch_protection += this._matches(question, ["branch protection", "branch", "configuration"]) ? 1 : 0;
+    scores.review_process += this._matches(question, ["pull request", "merge request", "review", "approved"]) ? 1 : 0;
+    scores.security_testing += this._matches(question, ["pipeline", "ci/cd", "security check", "commit"]) ? 1 : 0;
 
-    return "default";
+    return scores;
   }
 
   _matches(text, markers) {
@@ -353,18 +415,166 @@ export default class EvaluationEngine {
 
   _parseMcpContent(data) {
     if (!data) return [];
+    if (typeof data === "string") {
+      const trimmed = data.trim();
+      if (!trimmed) return [];
+      try {
+        return JSON.parse(trimmed);
+      } catch {
+        return data;
+      }
+    }
     if (Array.isArray(data)) {
       const textBlock = data.find((block) => block?.type === "text" && typeof block?.text === "string");
       if (textBlock) {
-        try { return JSON.parse(textBlock.text); } catch { return data; }
+        return this._parseMcpContent(textBlock.text);
       }
       return data;
     }
     if (typeof data === "object") {
+      // Normalize common MCP wrappers before evaluating.
+      if (Object.prototype.hasOwnProperty.call(data, "standardized")) {
+        return this._parseMcpContent(data.standardized);
+      }
+      if (Object.prototype.hasOwnProperty.call(data, "raw")) {
+        return this._parseMcpContent(data.raw);
+      }
+      if (Object.prototype.hasOwnProperty.call(data, "result")) {
+        return this._parseMcpContent(data.result);
+      }
       if (Array.isArray(data.content)) return this._parseMcpContent(data.content);
       return data;
     }
     return data;
+  }
+
+  _extractIdentityEvidence(data) {
+    const parsed = this._parseMcpContent(data);
+    let members = [];
+    let repository = null;
+    let diagnostics = null;
+
+    if (Array.isArray(parsed)) {
+      members = parsed;
+    } else if (parsed && typeof parsed === "object") {
+      if ("membership" in parsed) {
+        const membershipPayload = this._parseMcpContent(parsed.membership);
+        members = this._extractMemberArray(membershipPayload);
+      } else {
+        members = this._extractMemberArray(parsed);
+      }
+
+      if ("repository" in parsed) {
+        const repositoryPayload = this._parseMcpContent(parsed.repository);
+        repository = Array.isArray(repositoryPayload) ? repositoryPayload[0] ?? null : repositoryPayload;
+      } else if (this._looksLikeRepository(parsed)) {
+        repository = parsed;
+      }
+
+      if ("diagnostics" in parsed && parsed.diagnostics && typeof parsed.diagnostics === "object") {
+        diagnostics = parsed.diagnostics;
+      }
+    }
+
+    return {
+      members,
+      repository,
+      visibility: this._inferRepositoryVisibility(repository),
+      diagnostics
+    };
+  }
+
+  _extractMemberArray(payload) {
+    if (Array.isArray(payload)) return payload;
+    if (!payload || typeof payload !== "object") return [];
+    if (Array.isArray(payload.members)) return payload.members;
+    if (Array.isArray(payload.collaborators)) return payload.collaborators;
+    if (Array.isArray(payload.users)) return payload.users;
+    if (Array.isArray(payload.team_members)) return payload.team_members;
+    return this._asArray(payload);
+  }
+
+  _looksLikeRepository(value) {
+    if (!value || typeof value !== "object") return false;
+    const keys = Object.keys(value).map((key) => String(key).toLowerCase());
+    return ["visibility", "private", "default_branch", "full_name", "html_url"].some((marker) => keys.includes(marker));
+  }
+
+  _inferRepositoryVisibility(repository) {
+    if (!repository || typeof repository !== "object") {
+      return { known: false, isPublic: null, label: "unknown" };
+    }
+
+    const visibilityText = String(repository?.visibility ?? "").toLowerCase();
+    if (visibilityText) {
+      if (visibilityText === "public") {
+        return { known: true, isPublic: true, label: "public" };
+      }
+      if (["private", "internal"].includes(visibilityText)) {
+        return { known: true, isPublic: false, label: visibilityText };
+      }
+    }
+
+    if (typeof repository?.private === "boolean") {
+      return {
+        known: true,
+        isPublic: !repository.private,
+        label: repository.private ? "private" : "public"
+      };
+    }
+
+    return { known: false, isPublic: null, label: "unknown" };
+  }
+
+  _inferEvidenceProfile(data) {
+    const items = this._asArray(data);
+    let identitySignals = 0;
+    let branchSignals = 0;
+    let pullRequestSignals = 0;
+    let pipelineSignals = 0;
+    let vulnerabilitySignals = 0;
+
+    for (const item of items) {
+      if (!item || typeof item !== "object") continue;
+
+      const keys = Object.keys(item).map((k) => String(k).toLowerCase());
+      const keyText = keys.join(" ");
+
+      const hasIdentity = this._matches(keyText, [
+        "permissions", "access_level", "role", "members", "collaborator", "user", "username", "login"
+      ]);
+      const hasBranch = this._matches(keyText, [
+        "branch", "protected", "protection", "restrictions", "default_branch", "required_status_checks"
+      ]);
+      const hasPullRequest = this._matches(keyText, [
+        "pull_request", "pullrequest", "merge_request", "requested_reviewers", "approvals", "merged_by", "review"
+      ]);
+      const hasPipeline = this._matches(keyText, [
+        "pipeline", "job", "run", "check", "conclusion", "workflow", "commit_status", "ci"
+      ]);
+      const hasVulnerability = this._matches(keyText, [
+        "vulnerability", "alert", "severity", "cve", "dependabot", "finding", "security_advisory"
+      ]);
+
+      if (hasIdentity) identitySignals += 1;
+      if (hasBranch) branchSignals += 1;
+      if (hasPullRequest) pullRequestSignals += 1;
+      if (hasPipeline) pipelineSignals += 1;
+      if (hasVulnerability) vulnerabilitySignals += 1;
+
+      const labels = this._asArray(item?.labels).map((l) => String(l?.name ?? l ?? "").toLowerCase());
+      if (labels.some((name) => name.includes("security"))) {
+        vulnerabilitySignals += 1;
+      }
+    }
+
+    return {
+      identitySignals,
+      branchSignals,
+      pullRequestSignals,
+      pipelineSignals,
+      vulnerabilitySignals
+    };
   }
 
   _hasMcpError(data) {
@@ -382,6 +592,19 @@ export default class EvaluationEngine {
       return block ? String(block.text ?? "") : "";
     }
     return "";
+  }
+
+  _withComplianceFlag(verdict) {
+    const status = String(verdict?.status ?? "").toUpperCase();
+    const compliant = status === "COMPLIANT"
+      ? true
+      : status === "NON_COMPLIANT"
+        ? false
+        : null;
+    return {
+      ...verdict,
+      compliant
+    };
   }
 }
 

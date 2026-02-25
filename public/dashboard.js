@@ -210,6 +210,7 @@ function renderResultTable(result) {
     const component = escapeHtml(String(item?.component ?? item?.control_component ?? item?.evidence_source ?? "-"));
     const status = String(item?.status ?? "UNDETERMINED").toUpperCase();
     const statusClass = statusToClass(status);
+    const resultText = getComplianceResultText(item);
 
     return `
       <tr>
@@ -218,6 +219,7 @@ function renderResultTable(result) {
         <td>${controlName}</td>
         <td>${component}</td>
         <td><span class="status-chip ${statusClass}">${escapeHtml(status)}</span></td>
+        <td>${escapeHtml(resultText)}</td>
         <td>${repository}</td>
       </tr>
     `;
@@ -248,15 +250,17 @@ function renderResultTable(result) {
   const complianceRows = rows.map((item) => {
     const repository = escapeHtml(String(item?.repository ?? result?.repository ?? "-"));
     const controlId = escapeHtml(String(item?.control ?? "-"));
-    const standard = escapeHtml(String(result?.standard ?? "-"));
+    const controlName = escapeHtml(String(item?.description ?? item?.control_name ?? "-"));
     const status = String(item?.status ?? "UNDETERMINED").toUpperCase();
     const statusClass = statusToClass(status);
+    const resultText = getComplianceResultText(item);
 
     return `
       <tr>
-        <td>${standard}</td>
         <td>${controlId}</td>
+        <td>${controlName}</td>
         <td><span class="status-chip ${statusClass}">${escapeHtml(status)}</span></td>
+        <td>${escapeHtml(resultText)}</td>
         <td>${repository}</td>
       </tr>
     `;
@@ -278,6 +282,7 @@ function renderResultTable(result) {
               <th>Control Name</th>
               <th>Control Component</th>
               <th>Status</th>
+              <th>Result</th>
               <th>Repository</th>
             </tr>
           </thead>
@@ -292,9 +297,10 @@ function renderResultTable(result) {
         <table class="result-table">
           <thead>
             <tr>
-              <th>Compliance</th>
               <th>Control ID</th>
+              <th>Control Name</th>
               <th>Status</th>
+              <th>Result</th>
               <th>Repository</th>
             </tr>
           </thead>
@@ -332,6 +338,15 @@ function statusToClass(status) {
   if (status === "NON_COMPLIANT") return "bad";
   if (status === "ERROR") return "err";
   return "unknown";
+}
+
+function getComplianceResultText(item) {
+  if (item?.compliant === true) return "Compliant";
+  if (item?.compliant === false) return "Not Compliant";
+  const status = String(item?.status ?? "").toUpperCase();
+  if (status === "COMPLIANT") return "Compliant";
+  if (status === "NON_COMPLIANT") return "Not Compliant";
+  return "Undetermined";
 }
 
 function escapeHtml(value) {

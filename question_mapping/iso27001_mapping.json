@@ -4,7 +4,7 @@
     "control_name": "Access rights",
     "question": "Are repository access rights restricted to authorized users based on role and least privilege?",
     "mcp_tool": {
-      "github": "get_me",
+      "github": "list_collaborators",
       "gitlab": "list_project_members",
       "bitbucket": "bb_ls_users"
     },
