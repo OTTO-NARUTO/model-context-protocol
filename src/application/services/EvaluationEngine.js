@@ -17,6 +17,10 @@ export default class EvaluationEngine {
     }
 
     const payload = this._parseMcpContent(evidenceData);
+    const requirementVerdict = this.evaluateByRequirementType(payload, resolvedContext);
+    if (requirementVerdict) {
+      return this._withComplianceFlag(requirementVerdict, payload);
+    }
     const strategy = this._resolveStrategy(resolvedContext, payload);
 
     let verdict;
@@ -40,7 +44,274 @@ export default class EvaluationEngine {
         verdict = this.defaultEvaluation(resolvedContext);
         break;
     }
-    return this._withComplianceFlag(verdict);
+    return this._withComplianceFlag(verdict, payload);
+  }
+
+  evaluateByRequirementType(payload, context = {}) {
+    const logic = context?.logic && typeof context.logic === "object" ? context.logic : null;
+    const requirementType = String(logic?.requirementType ?? logic?.requirement_type ?? "").toLowerCase();
+    if (!requirementType) {
+      return null;
+    }
+
+    switch (requirementType) {
+      case "max_count":
+        return this.evaluateRequirementMaxCount(payload, context, logic);
+      case "none_allowed":
+        return this.evaluateRequirementNoneAllowed(payload, context, logic);
+      case "all_must_be_true":
+        return this.evaluateRequirementAllMustBeTrue(payload, context, logic);
+      case "min_reviews":
+        return this.evaluateRequirementMinReviews(payload, context, logic);
+      case "no_failures":
+        return this.evaluateRequirementNoFailures(payload, context, logic);
+      default:
+        return null;
+    }
+  }
+
+  evaluateRequirementMaxCount(payload, context = {}, logic = {}) {
+    const threshold = Number(logic?.threshold ?? 0);
+    const field = String(logic?.field ?? "count");
+
+    if (field === "admin_users") {
+      const identity = this._extractIdentityEvidence(payload);
+      const roles = identity.members.map((member) => this._classifyRole(member)).filter(Boolean);
+      const adminUsers = roles.filter((role) => ["owner", "admin", "maintainer"].includes(role)).length;
+      const pass = adminUsers <= threshold;
+
+      return {
+        status: pass ? "COMPLIANT" : "NON_COMPLIANT",
+        answer: pass
+          ? `Yes. Administrative users are within threshold (${adminUsers} <= ${threshold}).`
+          : `No. Administrative users exceed threshold (${adminUsers} > ${threshold}).`,
+        findings: pass
+          ? `Admin-like users (${adminUsers}) are within allowed maximum ${threshold}.`
+          : `Admin-like users (${adminUsers}) exceed allowed maximum ${threshold}.`,
+        metadata: {
+          strategy: "identity",
+          requirementType: "max_count",
+          requirementField: field,
+          threshold,
+          observedCount: adminUsers,
+          totalMembers: identity.members.length
+        }
+      };
+    }
+
+    const items = this._asArray(payload);
+    const observedCount = items.length;
+    const pass = observedCount <= threshold;
+    return {
+      status: pass ? "COMPLIANT" : "NON_COMPLIANT",
+      answer: pass
+        ? `Yes. Count is within threshold (${observedCount} <= ${threshold}).`
+        : `No. Count exceeds threshold (${observedCount} > ${threshold}).`,
+      findings: `Observed ${observedCount} for field '${field}' against max threshold ${threshold}.`,
+      metadata: {
+        strategy: "default",
+        requirementType: "max_count",
+        requirementField: field,
+        threshold,
+        observedCount
+      }
+    };
+  }
+
+  evaluateRequirementNoneAllowed(payload, _context = {}, logic = {}) {
+    const field = String(logic?.field ?? "");
+    const issues = this._asArray(payload);
+
+    let violatingItems = [];
+    if (field === "open_high_severity_alerts") {
+      violatingItems = issues.filter((item) => {
+        const severity = String(item?.severity ?? item?.risk ?? item?.severity_level ?? "").toLowerCase();
+        const state = String(item?.state ?? item?.status ?? "").toLowerCase();
+        const isOpen = ["open", "opened", "new", "detected"].includes(state) || state === "";
+        return isOpen && ["high", "critical"].includes(severity);
+      });
+    } else {
+      violatingItems = issues;
+    }
+
+    const violatingCount = violatingItems.length;
+    const pass = violatingCount === 0;
+    const samples = violatingItems
+      .map((item) => String(item?.number ?? item?.id ?? item?.title ?? "unknown"))
+      .slice(0, 10);
+
+    return {
+      status: pass ? "COMPLIANT" : "NON_COMPLIANT",
+      answer: pass
+        ? "Yes. No violating items were detected."
+        : `No. ${violatingCount} violating item(s) were detected.`,
+      findings: pass
+        ? `Requirement '${field}' passed with zero violations.`
+        : `Requirement '${field}' failed with ${violatingCount} violation(s) (examples: ${samples.join(", ") || "unknown"}).`,
+      metadata: {
+        strategy: "vulnerabilities",
+        requirementType: "none_allowed",
+        requirementField: field,
+        violatingCount,
+        samples
+      }
+    };
+  }
+
+  evaluateRequirementAllMustBeTrue(payload, context = {}, logic = {}) {
+    const field = String(logic?.field ?? "");
+    const branches = this._asArray(payload);
+    if (branches.length === 0) {
+      return this.defaultEvaluation(context);
+    }
+
+    let scope = branches;
+    if (field === "branch_protection_enabled") {
+      const primary = branches.filter((branch) => {
+        const name = String(branch?.name ?? branch?.displayId ?? branch?.branch ?? "").toLowerCase();
+        return ["main", "master", "prod", "production", "release", "develop"].some((marker) => name.includes(marker));
+      });
+      scope = primary.length > 0 ? primary : branches;
+    }
+
+    const failing = scope
+      .filter((item) => !this._hasProtectionSignals(item))
+      .map((item) => String(item?.name ?? item?.displayId ?? item?.branch ?? "unknown"))
+      .slice(0, 10);
+    const pass = failing.length === 0;
+
+    return {
+      status: pass ? "COMPLIANT" : "NON_COMPLIANT",
+      answer: pass
+        ? "Yes. All required items meet the expected condition."
+        : `No. ${failing.length} item(s) do not meet the expected condition.`,
+      findings: pass
+        ? `Requirement '${field}' satisfied for all ${scope.length} checked item(s).`
+        : `Requirement '${field}' failed for: ${failing.join(", ") || "unknown"}.`,
+      metadata: {
+        strategy: "branch_protection",
+        requirementType: "all_must_be_true",
+        requirementField: field,
+        totalChecked: scope.length,
+        failingItems: failing
+      }
+    };
+  }
+
+  evaluateRequirementMinReviews(payload, context = {}, logic = {}) {
+    const field = String(logic?.field ?? "");
+    const threshold = Number(logic?.threshold ?? 1);
+    const normalized = payload && typeof payload === "object" && !Array.isArray(payload)
+      ? payload
+      : null;
+
+    const hasCompositeShape = Array.isArray(normalized?.pull_requests);
+    const prs = hasCompositeShape
+      ? normalized.pull_requests
+      : this._asArray(payload);
+
+    if (hasCompositeShape && Number(normalized?.merged_pr_count ?? 0) === 0) {
+      const policy = String(normalized?.zero_merged_policy ?? "UNDETERMINED").toUpperCase();
+      const compliantWhenZero = policy === "COMPLIANT";
+      return {
+        status: compliantWhenZero ? "COMPLIANT" : "UNDETERMINED",
+        answer: compliantWhenZero
+          ? "Yes. No merged pull requests were found, so review requirement is considered satisfied by policy."
+          : "Unable to determine because no merged pull requests were found.",
+        findings: `Zero merged pull requests detected. Applied zero_merged_policy=${policy}.`,
+        metadata: {
+          strategy: "review_process",
+          requirementType: "min_reviews",
+          requirementField: field,
+          threshold,
+          totalChecked: 0,
+          failingItems: [],
+          zeroMergedPolicy: policy
+        }
+      };
+    }
+
+    if (prs.length === 0) {
+      return {
+        status: "UNDETERMINED",
+        answer: "Unable to determine because pull request review evidence was not returned.",
+        findings: "No pull request objects were found in the evidence payload for min_reviews evaluation.",
+        metadata: {
+          strategy: "review_process",
+          requirementType: "min_reviews",
+          requirementField: field,
+          threshold,
+          totalChecked: 0,
+          failingItems: [],
+          noEvidence: true
+        }
+      };
+    }
+
+    const mergedPrs = hasCompositeShape ? prs : prs.filter((pr) => {
+      const state = String(pr?.state ?? "").toLowerCase();
+      return Boolean(pr?.merged_at) || state === "merged" || Boolean(pr?.merged_by);
+    });
+    const scope = mergedPrs.length > 0 ? mergedPrs : prs;
+    const failing = scope
+      .filter((pr) => this._extractApprovalCount(pr) < threshold)
+      .map((pr) => String(pr?.number ?? pr?.iid ?? pr?.id ?? "unknown"))
+      .slice(0, 10);
+    const pass = failing.length === 0;
+
+    return {
+      status: pass ? "COMPLIANT" : "NON_COMPLIANT",
+      answer: pass
+        ? "Yes. Review threshold is met for all checked changes."
+        : `No. ${failing.length} change(s) are below the required review threshold.`,
+      findings: pass
+        ? `Requirement '${field}' satisfied with minimum ${threshold} review(s).`
+        : `Requirement '${field}' failed for PR/MR: ${failing.join(", ") || "unknown"} (min required: ${threshold}).`,
+      metadata: {
+        strategy: "review_process",
+        requirementType: "min_reviews",
+        requirementField: field,
+        threshold,
+        totalChecked: scope.length,
+        failingItems: failing
+      }
+    };
+  }
+
+  evaluateRequirementNoFailures(payload, context = {}, logic = {}) {
+    const field = String(logic?.field ?? "");
+    const checks = this._asArray(payload);
+    if (checks.length === 0) {
+      return this.defaultEvaluation(context);
+    }
+
+    const failing = checks.filter((item) => {
+      const status = String(item?.status ?? item?.state ?? item?.conclusion ?? "").toLowerCase();
+      return ["failed", "failure", "error", "canceled", "cancelled"].includes(status);
+    });
+    const failingCount = failing.length;
+    const pass = failingCount === 0;
+    const samples = failing
+      .map((item) => String(item?.name ?? item?.id ?? item?.key ?? "unknown"))
+      .slice(0, 10);
+
+    return {
+      status: pass ? "COMPLIANT" : "NON_COMPLIANT",
+      answer: pass
+        ? "Yes. No failed security checks were detected."
+        : `No. ${failingCount} failed security check(s) were detected.`,
+      findings: pass
+        ? `Requirement '${field}' satisfied with no failed checks.`
+        : `Requirement '${field}' failed with ${failingCount} failed check(s) (examples: ${samples.join(", ") || "unknown"}).`,
+      metadata: {
+        strategy: "security_testing",
+        requirementType: "no_failures",
+        requirementField: field,
+        failCount: failingCount,
+        failedStatuses: samples,
+        totalChecked: checks.length
+      }
+    };
   }
 
   // JUDGE: 8.9 Configuration Management
@@ -49,6 +320,14 @@ export default class EvaluationEngine {
     if (branches.length === 0) return this.defaultEvaluation(context);
 
     const protectedBranches = branches.filter((branch) => this._hasProtectionSignals(branch));
+    const unprotectedCriticalBranches = branches
+      .filter((branch) => {
+        const name = String(branch?.name ?? branch?.displayId ?? branch?.branch ?? "").toLowerCase();
+        const isCritical = ["main", "master", "prod", "production", "release", "develop"].some((marker) => name.includes(marker));
+        return isCritical && !this._hasProtectionSignals(branch);
+      })
+      .map((branch) => String(branch?.name ?? branch?.displayId ?? branch?.branch ?? "unknown"))
+      .slice(0, 10);
     const criticalBranches = protectedBranches.filter((branch) => {
       const name = String(branch?.name ?? branch?.displayId ?? branch?.branch ?? "").toLowerCase();
       return ["main", "master", "prod", "production", "release"].some((marker) => name.includes(marker));
@@ -62,13 +341,14 @@ export default class EvaluationEngine {
         : `No. No branch protection signals were detected in ${branches.length} branch item(s).`,
       findings: pass
         ? `Protected indicators found${criticalBranches.length > 0 ? ` on critical branches (${criticalBranches.length})` : ""}.`
-        : "Checked branch metadata and restriction fields; none indicated enforcement.",
+        : `Branch protection is missing on critical branches: ${unprotectedCriticalBranches.join(", ") || "unknown"}.`,
       metadata: {
         strategy: "branch_protection",
         controlId: controlIdFrom(context),
         totalChecked: branches.length,
         protectedCount: protectedBranches.length,
-        criticalProtectedCount: criticalBranches.length
+        criticalProtectedCount: criticalBranches.length,
+        unprotectedCriticalBranches
       }
     };
   }
@@ -97,6 +377,10 @@ export default class EvaluationEngine {
     const reviewCoverage = reviewed.length / prs.length;
     const pass = reviewCoverage >= 0.9;
     const unreviewedCount = prs.length - reviewed.length;
+    const unreviewedSamples = prs
+      .filter((pr) => !reviewed.includes(pr))
+      .map((pr) => String(pr?.number ?? pr?.iid ?? pr?.id ?? "unknown"))
+      .slice(0, 10);
 
     return {
       status: pass ? "COMPLIANT" : "NON_COMPLIANT",
@@ -105,13 +389,14 @@ export default class EvaluationEngine {
         : `No. Only ${reviewed.length}/${prs.length} change request(s) show review evidence.`,
       findings: pass
         ? "Reviewer/approval metadata indicates code review workflow is being enforced."
-        : `${unreviewedCount} change request(s) lack reviewer or approval evidence.`,
+        : `${unreviewedCount} change request(s) lack reviewer/approval evidence (examples: ${unreviewedSamples.join(", ") || "unknown"}).`,
       metadata: {
         strategy: "review_process",
         controlId: controlIdFrom(context),
         totalChecked: prs.length,
         reviewedCount: reviewed.length,
-        reviewCoverage
+        reviewCoverage,
+        unreviewedSamples
       }
     };
   }
@@ -190,12 +475,22 @@ export default class EvaluationEngine {
       member?.last_login
     ));
 
+    const failureReasons = [];
+    if (!rolePass) {
+      failureReasons.push(`elevated roles are high (${adminLikeCount}/${knownCount}, allowed ${maxAllowedAdminLike})`);
+    }
+    if (!visibilityPass) {
+      failureReasons.push(`repository visibility is ${visibility.label}`);
+    }
+
     return {
       status: pass ? "COMPLIANT" : "NON_COMPLIANT",
       answer: pass
         ? "Yes. Access roles and repository visibility indicate least-privilege expectations are met."
         : "No. Access evidence indicates either broad elevated privileges or disallowed repository exposure.",
-      findings: `Analyzed ${members.length} member(s): ${adminLikeCount} elevated role(s), ${unknownCount} unknown role(s). Repository visibility: ${visibility.label}.`,
+      findings: pass
+        ? `Analyzed ${members.length} member(s): ${adminLikeCount} elevated role(s), ${unknownCount} unknown role(s). Repository visibility: ${visibility.label}.`
+        : `Non-compliant because ${failureReasons.join(" and ")}.`,
       metadata: {
         strategy: "identity",
         controlId: controlIdFrom(context),
@@ -241,6 +536,9 @@ export default class EvaluationEngine {
     });
 
     const pass = securityAlerts.length === 0;
+    const alertSamples = securityAlerts
+      .map((item) => String(item?.number ?? item?.id ?? item?.title ?? "unknown"))
+      .slice(0, 10);
 
     return {
       status: pass ? "COMPLIANT" : "NON_COMPLIANT",
@@ -252,7 +550,8 @@ export default class EvaluationEngine {
         strategy: "vulnerabilities",
         controlId: controlIdFrom(context),
         totalIssues: issues.length,
-        securityIssueCount: securityAlerts.length
+        securityIssueCount: securityAlerts.length,
+        alertSamples
       }
     };
   }
@@ -283,6 +582,7 @@ export default class EvaluationEngine {
     }
 
     const pass = successCount > 0;
+    const failedStatuses = statuses.filter((status) => ["failed", "failure", "error", "canceled", "cancelled"].includes(status));
 
     return {
       status: pass ? "COMPLIANT" : "NON_COMPLIANT",
@@ -296,7 +596,8 @@ export default class EvaluationEngine {
         totalChecked: checks.length,
         statusSignals: statuses.length,
         successCount,
-        failCount
+        failCount,
+        failedStatuses: failedStatuses.slice(0, 10)
       }
     };
   }
@@ -363,6 +664,20 @@ export default class EvaluationEngine {
 
   _matches(text, markers) {
     return markers.some((marker) => text.includes(marker));
+  }
+
+  _extractApprovalCount(pr) {
+    const approvals = Number(pr?.approvals ?? pr?.approved ?? 0);
+    if (approvals > 0) return approvals;
+    const approvedBy = this._asArray(pr?.approved_by ?? pr?.approvers);
+    if (approvedBy.length > 0) return approvedBy.length;
+    const reviews = this._asArray(pr?.reviews);
+    const approvedReviews = reviews.filter((review) => {
+      const state = String(review?.state ?? review?.status ?? "").toLowerCase();
+      return state === "approved" || state === "approval";
+    });
+    if (approvedReviews.length > 0) return approvedReviews.length;
+    return Boolean(pr?.merged_by) ? 1 : 0;
   }
 
   _asArray(value) {
@@ -594,17 +909,113 @@ export default class EvaluationEngine {
     return "";
   }
 
-  _withComplianceFlag(verdict) {
+  _withComplianceFlag(verdict, payload = null) {
     const status = String(verdict?.status ?? "").toUpperCase();
     const compliant = status === "COMPLIANT"
       ? true
       : status === "NON_COMPLIANT"
         ? false
         : null;
+    const findings = String(verdict?.findings ?? "").trim();
+    const failReason = compliant === true
+      ? ""
+      : (findings || "Evaluation could not confirm compliance from the available evidence.");
+    const evidenceSnapshot = this._sanitizeSnapshot(this._buildEvidenceSnapshot(payload, verdict?.metadata ?? {}));
     return {
       ...verdict,
-      compliant
+      compliant,
+      failReason,
+      evidenceSnapshot
     };
+  }
+
+  _buildEvidenceSnapshot(payload, metadata = {}) {
+    const strategy = String(metadata?.strategy ?? "").toLowerCase();
+    const items = this._asArray(payload);
+
+    if (strategy === "identity") {
+      return {
+        total_members: Number(metadata?.totalMembers ?? items.length ?? 0),
+        elevated_roles: Number(metadata?.adminLikeCount ?? 0),
+        unknown_roles: Number(metadata?.unknownCount ?? 0),
+        repository_visibility: String(metadata?.repositoryVisibility ?? "unknown")
+      };
+    }
+
+    if (strategy === "branch_protection") {
+      return {
+        total_branches: Number(metadata?.totalChecked ?? items.length ?? 0),
+        protected_branches: Number(metadata?.protectedCount ?? 0),
+        unprotected_critical_branches: Array.isArray(metadata?.unprotectedCriticalBranches)
+          ? metadata.unprotectedCriticalBranches
+          : []
+      };
+    }
+
+    if (strategy === "review_process") {
+      return {
+        total_changes: Number(metadata?.totalChecked ?? items.length ?? 0),
+        reviewed_changes: Number(metadata?.reviewedCount ?? 0),
+        review_coverage: Number(metadata?.reviewCoverage ?? 0),
+        unreviewed_samples: Array.isArray(metadata?.unreviewedSamples) ? metadata.unreviewedSamples : []
+      };
+    }
+
+    if (strategy === "security_testing") {
+      return {
+        total_records: Number(metadata?.totalChecked ?? items.length ?? 0),
+        success_count: Number(metadata?.successCount ?? 0),
+        fail_count: Number(metadata?.failCount ?? 0),
+        failed_statuses: Array.isArray(metadata?.failedStatuses) ? metadata.failedStatuses : []
+      };
+    }
+
+    if (strategy === "vulnerabilities") {
+      return {
+        total_issues: Number(metadata?.totalIssues ?? items.length ?? 0),
+        security_issue_count: Number(metadata?.securityIssueCount ?? 0),
+        alert_samples: Array.isArray(metadata?.alertSamples) ? metadata.alertSamples : []
+      };
+    }
+
+    return {
+      records: items.length
+    };
+  }
+
+  _sanitizeSnapshot(value, depth = 0) {
+    const MAX_DEPTH = 3;
+    const MAX_ARRAY = 10;
+    const MAX_STRING = 160;
+
+    if (value === null || value === undefined) return value;
+    if (depth > MAX_DEPTH) return "[truncated]";
+
+    if (typeof value === "string") {
+      const compact = value.replace(/\s+/g, " ").trim();
+      return compact.length > MAX_STRING ? `${compact.slice(0, MAX_STRING)}...` : compact;
+    }
+
+    if (typeof value === "number" || typeof value === "boolean") {
+      return value;
+    }
+
+    if (Array.isArray(value)) {
+      return value
+        .slice(0, MAX_ARRAY)
+        .map((item) => this._sanitizeSnapshot(item, depth + 1));
+    }
+
+    if (typeof value === "object") {
+      const out = {};
+      for (const [key, entry] of Object.entries(value)) {
+        if (entry === undefined) continue;
+        out[key] = this._sanitizeSnapshot(entry, depth + 1);
+      }
+      return out;
+    }
+
+    return String(value);
   }
 }
 

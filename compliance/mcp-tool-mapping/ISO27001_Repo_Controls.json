@@ -13,19 +13,11 @@
             "gitlab": "list_project_members",
             "bitbucket": "bb_ls_users"
           },
-          "required_tools": {
-            "github": [
-              "list_collaborators",
-              "get_repository"
-            ]
-          },
           "logic": {
-            "path": "permissions.admin",
-            "operator": "equals",
-            "expected": true,
-            "requirementType": "count",
-            "threshold": 1,
-            "inverse": false
+            "requirementType": "max_count",
+            "field": "admin_users",
+            "threshold": 2,
+            "description": "Number of users with administrative privileges must not exceed allowed threshold"
           }
         }
       ]
@@ -41,6 +33,11 @@
             "github": "list_code_scanning_alerts",
             "gitlab": "list_vulnerability_findings",
             "bitbucket": "bb_list_vulnerabilities"
+          },
+          "logic": {
+            "requirementType": "none_allowed",
+            "field": "open_high_severity_alerts",
+            "description": "No open high severity vulnerabilities should exist"
           }
         }
       ]
@@ -53,9 +50,14 @@
         {
           "evidence_source": "code_repo_scan",
           "tools": {
-            "github": "list_branches",
+            "github": "get_branch_protection",
             "gitlab": "get_project_protected_branches",
             "bitbucket": "list_branch_restrictions"
+          },
+          "logic": {
+            "requirementType": "all_must_be_true",
+            "field": "branch_protection_enabled",
+            "description": "All primary branches must have protection rules enabled"
           }
         }
       ]
@@ -66,11 +68,26 @@
       "component": "Technological controls",
       "mappings": [
         {
-          "evidence_source": "code_repo_scan",
+          "evidence_source": "code_review_scan",
           "tools": {
-            "github": "get_pull_request_reviews",
-            "gitlab": "list_merge_requests",
-            "bitbucket": "list_pullrequests"
+            "github": {
+              "listMerged": "search_pull_requests",
+              "readReviews": "pull_request_read"
+            },
+            "gitlab": {
+              "listMerged": "list_merge_requests",
+              "readApprovals": "get_merge_request_approvals"
+            },
+            "bitbucket": {
+              "listMerged": "list_pullrequests",
+              "readApprovals": "get_pullrequest_approvals"
+            }
+          },
+          "logic": {
+            "requirementType": "min_reviews",
+            "field": "approved_reviews_count",
+            "threshold": 1,
+            "description": "All merged pull/merge requests must have at least one approved review"
           }
         }
       ]
@@ -81,11 +98,16 @@
       "component": "Technological controls",
       "mappings": [
         {
-          "evidence_source": "code_repo_scan",
+          "evidence_source": "pipeline_security_scan",
           "tools": {
-            "github": "get_pull_request_status",
+            "github": "list_check_runs",
             "gitlab": "list_pipeline_jobs",
             "bitbucket": "bb_list_pipelines"
+          },
+          "logic": {
+            "requirementType": "no_failures",
+            "field": "failed_security_checks",
+            "description": "No security-related CI/CD checks should be failing"
           }
         }
       ]

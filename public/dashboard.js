@@ -13,7 +13,6 @@ const complianceSelect = document.getElementById("complianceSelect");
 const runComplianceTestBtn = document.getElementById("runComplianceTestBtn");
 const resultSection = document.getElementById("resultSection");
 const resultBox = document.getElementById("resultBox");
-const SINGLE_TENANT_ID = "tenant-acme";
 const AUTO_LOGOUT_MS = 30 * 60 * 1000;
 let logoutTimerId = null;
 let logoutInProgress = false;
@@ -26,10 +25,6 @@ const complianceStandardMap = {
 };
 
 dashboardTitle.textContent = `${provider} Dashboard`;
-
-function tenantHeader() {
-  return { "x-tenant-id": SINGLE_TENANT_ID };
-}
 
 function updateComplianceVisibility() {
   const hasRepo = getSelectedRepos().length > 0;
@@ -96,13 +91,7 @@ function renderRepoPickerList() {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {
-    ...options,
-    headers: {
-      ...(options.headers || {}),
-      ...tenantHeader()
-    }
-  });
+  const response = await fetch(path, options);
 
   if (!response.ok) {
     const text = await response.text();
@@ -176,7 +165,7 @@ async function runComplianceTest() {
   }
 
   resultSection.hidden = false;
-  resultBox.textContent = "Running compliance test...";
+  resultBox.innerHTML = buildLoadingMarkup();
 
   try {
     const result = await api("/api/compliance/evaluate-standard", {
@@ -211,6 +200,7 @@ function renderResultTable(result) {
     const status = String(item?.status ?? "UNDETERMINED").toUpperCase();
     const statusClass = statusToClass(status);
     const resultText = getComplianceResultText(item);
+    const statusChip = buildStatusChip(item, status, statusClass);
 
     return `
       <tr>
@@ -218,7 +208,7 @@ function renderResultTable(result) {
         <td>${controlId}</td>
         <td>${controlName}</td>
         <td>${component}</td>
-        <td><span class="status-chip ${statusClass}">${escapeHtml(status)}</span></td>
+        <td>${statusChip}</td>
         <td>${escapeHtml(resultText)}</td>
         <td>${repository}</td>
       </tr>
@@ -254,12 +244,13 @@ function renderResultTable(result) {
     const status = String(item?.status ?? "UNDETERMINED").toUpperCase();
     const statusClass = statusToClass(status);
     const resultText = getComplianceResultText(item);
+    const statusChip = buildStatusChip(item, status, statusClass);
 
     return `
       <tr>
         <td>${controlId}</td>
         <td>${controlName}</td>
-        <td><span class="status-chip ${statusClass}">${escapeHtml(status)}</span></td>
+        <td>${statusChip}</td>
         <td>${escapeHtml(resultText)}</td>
         <td>${repository}</td>
       </tr>
@@ -349,6 +340,17 @@ function getComplianceResultText(item) {
   return "Undetermined";
 }
 
+function buildStatusChip(item, status, statusClass) {
+  const normalizedStatus = String(status ?? "").toUpperCase();
+  if (normalizedStatus !== "NON_COMPLIANT") {
+    return `<span class="status-chip ${statusClass}">${escapeHtml(normalizedStatus)}</span>`;
+  }
+
+  const reason = String(item?.fail_reason ?? item?.findings ?? "No reason provided.").trim();
+  const title = escapeHtml(reason).replaceAll("\n", " ");
+  return `<span class="status-chip ${statusClass} with-reason" title="${title}">${escapeHtml(normalizedStatus)}</span>`;
+}
+
 function escapeHtml(value) {
   return value
     .replaceAll("&", "&amp;")
@@ -356,6 +358,15 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function buildLoadingMarkup() {
+  return `
+    <div class="loading-state" role="status" aria-live="polite">
+      <img class="loading-dog" src="/loading/pixel-dog.svg" alt="Pixel dog loading animation" />
+      <p class="loading-text">One moment please...</p>
+    </div>
+  `;
 }
 
 disconnectBtn.addEventListener("click", async () => {

@@ -4,12 +4,15 @@ import { existsSync, readFileSync } from "fs";
 import { randomUUID } from "crypto";
 import { isProvider } from "../../domain/entities/provider.js";
 import EvaluationEngine from "../../application/services/EvaluationEngine.js";
+import { ReportFormatter } from "../../application/services/reportFormatter.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const projectRoot = path.resolve(__dirname, "../../../");
 
 const evaluationEngine = new EvaluationEngine();
+const reportFormatter = new ReportFormatter();
+const controlLogicCatalog = buildControlLogicCatalog();
 
 function getMapping(standard) {
   const fileName = String(standard ?? "").toLowerCase() === "iso27001"
@@ -42,6 +45,58 @@ function getControlEntry(controlId) {
   return allMappings.find((item) => String(item?.control_id ?? "") === String(controlId));
 }
 
+function buildControlLogicCatalog() {
+  const fileSpecs = [
+    { standard: "ISO27001", file: "ISO27001_Repo_Controls.json" },
+    { standard: "SOC2", file: "SOC2_Repo_Controls.json" }
+  ];
+
+  const out = {};
+  for (const spec of fileSpecs) {
+    const filePath = path.join(projectRoot, "compliance", "mcp-tool-mapping", spec.file);
+    if (!existsSync(filePath)) {
+      continue;
+    }
+
+    let parsed = null;
+    try {
+      parsed = JSON.parse(readFileSync(filePath, "utf-8"));
+    } catch {
+      parsed = null;
+    }
+    const controls = Array.isArray(parsed?.controls) ? parsed.controls : [];
+    for (const control of controls) {
+      const controlCode = String(control?.control_code ?? "");
+      if (!controlCode) continue;
+      const mapping = Array.isArray(control?.mappings) ? control.mappings[0] : null;
+      const logic = mapping?.logic && typeof mapping.logic === "object" ? mapping.logic : null;
+      if (!logic) continue;
+      out[`${spec.standard}:${controlCode}`] = logic;
+    }
+  }
+
+  return out;
+}
+
+function getControlLogic(controlId, standard) {
+  const normalizedControl = String(controlId ?? "");
+  const normalizedStandard = String(standard ?? "").toUpperCase();
+  const directKey = `${normalizedStandard}:${normalizedControl}`;
+  if (controlLogicCatalog[directKey]) {
+    return controlLogicCatalog[directKey];
+  }
+
+  // Fallback: look up by control id only if unique in catalog.
+  const matches = Object.entries(controlLogicCatalog)
+    .filter(([key]) => key.endsWith(`:${normalizedControl}`))
+    .map(([, value]) => value);
+
+  if (matches.length === 1) {
+    return matches[0];
+  }
+  return null;
+}
+
 function normalizeRepoNames(repoName, repoNames) {
   const repos = Array.isArray(repoNames)
     ? repoNames
@@ -57,12 +112,14 @@ function parseRepoCoordinates(fullRepoName) {
   return { owner, repo };
 }
 
-function extractEvidencePayload(evidence) {
-  return evidence?.raw ?? evidence?.standardized ?? evidence;
+function normalizePreference(value) {
+  const normalized = String(value ?? "prefer_mcp").toLowerCase();
+  const allowed = new Set(["prefer_mcp", "prefer_rest", "mcp_only", "rest_only"]);
+  return allowed.has(normalized) ? normalized : "prefer_mcp";
 }
 
-function isUnknownToolError(message) {
-  return /unknown tool/i.test(String(message ?? ""));
+function extractEvidencePayload(evidence) {
+  return evidence?.raw ?? evidence?.standardized ?? evidence;
 }
 
 function isRetryableToolError(message) {
@@ -96,13 +153,13 @@ function buildToolCoverage(controlId, provider, evidencePayload) {
 }
 
 export class ComplianceController {
-  constructor(oauthService, mcpClient) {
+  constructor(oauthService, toolExecutionStrategy) {
     this.oauthService = oauthService;
-    this.mcpClient = mcpClient;
+    this.toolExecutionStrategy = toolExecutionStrategy;
   }
 
   evaluateControl = async (req, res) => {
-    const { controlId, provider, repoName } = req.body ?? {};
+    const { controlId, provider, repoName, executionPreference } = req.body ?? {};
     const [owner, repo] = String(repoName ?? "").split("/");
 
     try {
@@ -136,8 +193,10 @@ export class ComplianceController {
         toolName,
         owner,
         repo,
-        token
+        token,
+        preference: normalizePreference(executionPreference)
       });
+      const evaluatedAt = new Date().toISOString();
       const evidencePayload = collected.evidencePayload;
       const verdict = evaluationEngine.evaluate(controlId, evidencePayload, {
         controlId,
@@ -145,12 +204,14 @@ export class ComplianceController {
         question: plan.question,
         evidenceSource: plan.evidence_source,
         toolName: collected.toolUsed,
-        provider
+        provider,
+        logic: getControlLogic(controlId)
       });
       const toolCoverage = buildToolCoverage(controlId, provider, evidencePayload);
 
       res.json({
         control: controlId,
+        evaluated_at: evaluatedAt,
         description: plan.control_name,
         question: plan.question,
         answer: verdict.answer,
@@ -158,10 +219,24 @@ export class ComplianceController {
         evidence_source: plan.evidence_source,
         tool_used: collected.toolUsed,
         status: verdict.status,
+        fail_reason: verdict.failReason,
+        evidence_snapshot: verdict.evidenceSnapshot,
         findings: verdict.findings,
         metadata: verdict.metadata,
         evidence: evidencePayload,
         traceId: collected.traceId,
+        report: reportFormatter.formatControlReport({
+          repository: repoName,
+          control: controlId,
+          description: plan.control_name,
+          question: plan.question,
+          status: verdict.status,
+          compliant: verdict.compliant,
+          fail_reason: verdict.failReason,
+          evaluated_at: evaluatedAt,
+          evidence_source: plan.evidence_source,
+          tool_used: collected.toolUsed
+        }),
         ...(toolCoverage ?? {})
       });
     } catch (error) {
@@ -172,7 +247,7 @@ export class ComplianceController {
   };
 
   evaluateStandard = async (req, res) => {
-    const { standard, provider, repoName, repoNames } = req.body ?? {};
+    const { standard, provider, repoName, repoNames, executionPreference } = req.body ?? {};
     const normalizedStandard = String(standard ?? "").toUpperCase();
     const normalizedRepos = normalizeRepoNames(repoName, repoNames);
 
@@ -221,7 +296,8 @@ export class ComplianceController {
               toolName,
               owner,
               repo,
-              token
+              token,
+              preference: normalizePreference(executionPreference)
             });
             const evidencePayload = collected.evidencePayload;
             const verdict = evaluationEngine.evaluate(item.control_id, evidencePayload, {
@@ -230,12 +306,14 @@ export class ComplianceController {
               question: item.question,
               evidenceSource: item.evidence_source,
               toolName: collected.toolUsed,
-              provider
+              provider,
+              logic: getControlLogic(item.control_id, normalizedStandard)
             });
             const toolCoverage = buildToolCoverage(item.control_id, provider, evidencePayload);
 
             results.push({
               repository: fullRepoName,
+              evaluated_at: new Date().toISOString(),
               control: item.control_id,
               description: item.control_name,
               question: item.question,
@@ -244,6 +322,8 @@ export class ComplianceController {
               evidence_source: item.evidence_source,
               tool_used: collected.toolUsed,
               status: verdict.status,
+              fail_reason: verdict.failReason,
+              evidence_snapshot: verdict.evidenceSnapshot,
               findings: verdict.findings,
               metadata: verdict.metadata,
               traceId: collected.traceId ?? randomUUID(),
@@ -253,6 +333,7 @@ export class ComplianceController {
             const message = error instanceof Error ? error.message : "Evaluation failed.";
             results.push({
               repository: fullRepoName,
+              evaluated_at: new Date().toISOString(),
               control: item.control_id,
               description: item.control_name,
               question: item.question,
@@ -261,6 +342,7 @@ export class ComplianceController {
               evidence_source: item.evidence_source,
               tool_used: resolveToolName(item.mcp_tool, provider),
               status: "ERROR",
+              fail_reason: message,
               findings: message,
               metadata: { error: true },
               traceId: randomUUID()
@@ -281,7 +363,8 @@ export class ComplianceController {
           non_compliant: results.filter((item) => item.status === "NON_COMPLIANT").length,
           errors: results.filter((item) => item.status === "ERROR").length
         },
-        results
+        results,
+        report: reportFormatter.formatStandardReport(results)
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Evaluation failed.";
@@ -301,7 +384,7 @@ export class ComplianceController {
 
       const tenantId = req.tenantId;
       const token = await this.oauthService.getAccessToken(provider, tenantId);
-      const tools = await this.mcpClient.listTools(provider, token);
+      const tools = await this.toolExecutionStrategy.listTools(provider, token);
       res.json({ provider, tools });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Tool discovery failed.";
@@ -310,7 +393,7 @@ export class ComplianceController {
     }
   };
 
-  collectEvidence = async ({ controlId, provider, toolName, owner, repo, token }) => {
+  collectEvidence = async ({ controlId, provider, toolName, owner, repo, token, preference = "prefer_mcp" }) => {
     const normalizedProvider = String(provider ?? "").toLowerCase();
     const normalizedControlId = String(controlId ?? "");
     const args = { owner, repo };
@@ -339,18 +422,20 @@ export class ComplianceController {
         };
       }
 
-      const collaboratorEvidence = await this.mcpClient.callTool(
+      const collaboratorEvidence = await this.toolExecutionStrategy.executeTool({
         provider,
-        "list_collaborators",
-        args,
-        token
-      );
-      const repositoryEvidence = await this.mcpClient.callTool(
+        toolName: "list_collaborators",
+        params: args,
+        token,
+        preference
+      });
+      const repositoryEvidence = await this.toolExecutionStrategy.executeTool({
         provider,
-        "get_repository",
-        args,
-        token
-      );
+        toolName: "get_repository",
+        params: args,
+        token,
+        preference
+      });
 
       const repositoryPayload = extractEvidencePayload(repositoryEvidence);
       const collaboratorPayload = extractEvidencePayload(collaboratorEvidence);
@@ -365,7 +450,23 @@ export class ComplianceController {
       };
     }
 
-    const evidence = await this.mcpClient.callTool(provider, toolName, args, token);
+    if (normalizedProvider === "github" && normalizedControlId === "8.28") {
+      return this.collectCodeReviewEvidence({
+        provider,
+        owner,
+        repo,
+        token,
+        preference
+      });
+    }
+
+    const evidence = await this.toolExecutionStrategy.executeTool({
+      provider,
+      toolName,
+      params: args,
+      token,
+      preference
+    });
     return {
       toolUsed: toolName,
       traceId: evidence?.traceId ?? randomUUID(),
@@ -375,8 +476,11 @@ export class ComplianceController {
 
   safeListToolNames = async (provider, token) => {
     try {
-      const tools = await this.mcpClient.listTools(provider, token);
-      return tools.map((item) => String(item?.name ?? "")).filter(Boolean);
+      const tools = await this.toolExecutionStrategy.listTools(provider, token);
+      return tools
+        .filter((item) => String(item?.selected_mode ?? "") !== "none")
+        .map((item) => String(item?.name ?? ""))
+        .filter(Boolean);
     } catch {
       return [];
     }
@@ -400,7 +504,12 @@ export class ComplianceController {
     for (const tool of candidateTools) {
       for (const params of variants) {
         try {
-          const evidence = await this.mcpClient.callTool(provider, tool, params, token);
+          const evidence = await this.toolExecutionStrategy.executeTool({
+            provider,
+            toolName: tool,
+            params,
+            token
+          });
           return { toolUsed: tool, evidence, error: null };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error ?? "");
@@ -428,5 +537,137 @@ export class ComplianceController {
       evidence: null,
       error: lastErrorMessage || "No compatible membership tool found.",
     };
+  };
+
+  collectCodeReviewEvidence = async ({ provider, owner, repo, token, preference = "prefer_mcp" }) => {
+    const mergedPrsQuery = `repo:${owner}/${repo} is:pr is:merged`;
+    const mergedPrCandidates = [
+      {
+        toolName: "search_pull_requests",
+        params: { owner, repo, query: mergedPrsQuery, perPage: 100, page: 1 }
+      },
+      {
+        toolName: "list_pull_requests",
+        params: { owner, repo, state: "closed", perPage: 100, page: 1 }
+      }
+    ];
+
+    const mergedEvidence = await this.tryToolCandidates(provider, mergedPrCandidates, token, preference);
+    if (!mergedEvidence) {
+      throw new Error("Unable to collect merged pull requests for control 8.28.");
+    }
+
+    const mergedPrItems = this.extractPullRequests(mergedEvidence.payload);
+    const mergedPrNumbers = mergedPrItems
+      .filter((pr) => this.isMergedPullRequest(pr))
+      .map((pr) => this.extractPullNumber(pr))
+      .filter((value) => Number.isFinite(value));
+
+    const dedupedPullNumbers = [...new Set(mergedPrNumbers)];
+    const pullRequests = [];
+    for (const pullNumber of dedupedPullNumbers) {
+      const reviewEvidence = await this.tryToolCandidates(
+        provider,
+        [
+          {
+            toolName: "pull_request_read",
+            params: { owner, repo, pullNumber, method: "get_reviews", perPage: 100, page: 1 }
+          },
+          {
+            toolName: "get_pull_request_reviews",
+            params: { owner, repo, pullNumber, perPage: 100, page: 1 }
+          }
+        ],
+        token,
+        preference
+      );
+
+      const reviews = this.extractReviewItems(reviewEvidence?.payload);
+      const approvedReviewsCount = reviews.filter((review) => {
+        const state = String(review?.state ?? review?.status ?? "").toUpperCase();
+        return state === "APPROVED" || state === "APPROVE";
+      }).length;
+
+      pullRequests.push({
+        pullNumber,
+        approved_reviews_count: approvedReviewsCount
+      });
+    }
+
+    const zeroMergedPolicy = "COMPLIANT";
+    const traceId = mergedEvidence?.traceId ?? randomUUID();
+    const reviewToolUsed = pullRequests.length > 0 ? "pull_request_read(get_reviews)" : "none";
+    return {
+      toolUsed: `${mergedEvidence.toolUsed}+${reviewToolUsed}`,
+      traceId,
+      evidencePayload: {
+        pull_requests: pullRequests,
+        merged_pr_count: pullRequests.length,
+        zero_merged_policy: zeroMergedPolicy
+      }
+    };
+  };
+
+  tryToolCandidates = async (provider, candidates, token, preference) => {
+    for (const candidate of candidates) {
+      try {
+        console.log(`[8.28] tool_used=${candidate.toolName}`);
+        const evidence = await this.toolExecutionStrategy.executeTool({
+          provider,
+          toolName: candidate.toolName,
+          params: candidate.params,
+          token,
+          preference
+        });
+        return {
+          toolUsed: candidate.toolName,
+          traceId: evidence?.traceId ?? randomUUID(),
+          payload: extractEvidencePayload(evidence)
+        };
+      } catch {
+        continue;
+      }
+    }
+    return null;
+  };
+
+  extractPullRequests = (payload) => {
+    if (Array.isArray(payload)) {
+      return payload;
+    }
+    if (Array.isArray(payload?.items)) {
+      return payload.items;
+    }
+    if (Array.isArray(payload?.data)) {
+      return payload.data;
+    }
+    return [];
+  };
+
+  isMergedPullRequest = (pr) => {
+    const state = String(pr?.state ?? "").toLowerCase();
+    return Boolean(pr?.merged_at) || state === "merged" || Boolean(pr?.merged_by);
+  };
+
+  extractPullNumber = (pr) => {
+    const value = pr?.number ?? pr?.pullNumber ?? pr?.pull_number ?? pr?.iid ?? null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+
+  extractReviewItems = (payload) => {
+    if (Array.isArray(payload)) {
+      return payload;
+    }
+    if (Array.isArray(payload?.items)) {
+      return payload.items;
+    }
+    if (Array.isArray(payload?.data)) {
+      return payload.data;
+    }
+    if (Array.isArray(payload?.reviews)) {
+      return payload.reviews;
+    }
+    return [];
   };
 }

@@ -51,6 +51,10 @@ export class McpClient {
     }
 
     const requestId = randomUUID();
+    if (!this.getMcpUrl(provider)) {
+      throw new Error(`MCP URL is not configured for provider ${provider}.`);
+    }
+
     const parsed = await this.sendRequest(
       provider,
       "tools/call",
@@ -65,9 +69,12 @@ export class McpClient {
   }
 
   async listTools(provider, token) {
+    if (!this.getMcpUrl(provider)) {
+      return [];
+    }
+
     const result = await this.sendRequest(provider, "tools/list", {}, token);
     const tools = Array.isArray(result?.tools) ? result.tools : [];
-
     return tools.map((tool) => ({
       name: String(tool?.name ?? ""),
       description: String(tool?.description ?? "")
@@ -140,10 +147,15 @@ export class McpClient {
       throw new Error(message);
     }
 
+    const normalizedPayload = result.standardized ?? result.raw ?? result;
+
     return {
       traceId: typeof result.traceId === "string" ? result.traceId : requestId,
-      raw: result.raw ?? result,
-      standardized: result.standardized ?? result.raw ?? result
+      raw: normalizedPayload,
+      standardized: normalizedPayload,
+      ...(typeof result?.transport === "string" ? { transport: result.transport } : {}),
+      ...(typeof result?.tool === "string" ? { tool: result.tool } : {})
     };
   }
+
 }

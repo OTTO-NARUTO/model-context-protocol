@@ -1,20 +1,9 @@
 const providers = ["github", "gitlab", "bitbucket"];
 const providerCards = document.getElementById("providerCards");
-const SINGLE_TENANT_ID = "tenant-acme";
-
-function tenantHeader() {
-  return {
-    "x-tenant-id": SINGLE_TENANT_ID
-  };
-}
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
-    ...options,
-    headers: {
-      ...(options.headers || {}),
-      ...tenantHeader()
-    }
+    ...options
   });
   if (!response.ok) {
     return { connected: false };
@@ -54,8 +43,7 @@ providerCards.addEventListener("click", (event) => {
   if (!provider) {
     return;
   }
-  const tenant = encodeURIComponent(SINGLE_TENANT_ID);
-  window.location.href = `/api/auth/${provider}/connect?tenant=${tenant}`;
+  window.location.href = `/api/auth/${provider}/connect`;
 });
 
 refreshProviderCards();

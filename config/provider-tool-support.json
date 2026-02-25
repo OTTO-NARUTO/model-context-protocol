@@ -1,0 +1,54 @@
+{
+  "providers": {
+    "github": {
+      "mcp": [
+        "list_branches",
+        "list_pull_requests",
+        "list_commits"
+      ],
+      "rest": [
+        "list_collaborators",
+        "get_repository",
+        "get_branch_protection",
+        "list_dependabot_alerts",
+        "list_code_scanning_alerts",
+        "list_issues",
+        "list_branches",
+        "list_pull_requests",
+        "list_commits"
+      ]
+    },
+    "gitlab": {
+      "mcp": [
+        "list_project_members",
+        "list_vulnerability_findings",
+        "get_project_protected_branches",
+        "list_merge_requests",
+        "list_pipeline_jobs"
+      ],
+      "rest": [
+        "list_project_members",
+        "list_vulnerability_findings",
+        "get_project_protected_branches",
+        "list_merge_requests",
+        "list_pipeline_jobs"
+      ]
+    },
+    "bitbucket": {
+      "mcp": [
+        "bb_ls_users",
+        "bb_list_vulnerabilities",
+        "list_branch_restrictions",
+        "list_pullrequests",
+        "bb_list_pipelines"
+      ],
+      "rest": [
+        "bb_ls_users",
+        "bb_list_vulnerabilities",
+        "list_branch_restrictions",
+        "list_pullrequests",
+        "bb_list_pipelines"
+      ]
+    }
+  }
+}

@@ -306,7 +306,40 @@ button.secondary {
   color: var(--danger);
 }
 
+.status-chip.with-reason {
+  cursor: help;
+  border-bottom: 1px dotted currentColor;
+}
+
 .status-chip.unknown {
   background: #ece7da;
   color: #5b574d;
+}
+
+.loading-state {
+  min-height: 140px;
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  text-align: center;
+}
+
+.loading-dog {
+  width: 96px;
+  height: 72px;
+  image-rendering: pixelated;
+  animation: dog-bounce 650ms steps(2, end) infinite;
+}
+
+.loading-text {
+  margin: 0;
+  font-size: 14px;
+  color: #4a463f;
+  font-weight: 600;
+}
+
+@keyframes dog-bounce {
+  0% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+  100% { transform: translateY(0); }
 }

@@ -1,0 +1,165 @@
+{
+  "providers": {
+    "github": {
+      "auth": "bearer",
+      "tools": {
+        "list_collaborators": {
+          "method": "GET",
+          "path": "/repos/{owner}/{repo}/collaborators",
+          "query": {
+            "affiliation": "all",
+            "per_page": 100,
+            "page": 1
+          }
+        },
+        "get_repository": {
+          "method": "GET",
+          "path": "/repos/{owner}/{repo}"
+        },
+        "list_issues": {
+          "method": "GET",
+          "path": "/repos/{owner}/{repo}/issues",
+          "query": {
+            "state": "open",
+            "per_page": 100,
+            "page": 1
+          }
+        },
+        "list_branches": {
+          "method": "GET",
+          "path": "/repos/{owner}/{repo}/branches",
+          "query": {
+            "per_page": 100,
+            "page": 1
+          }
+        },
+        "list_pull_requests": {
+          "method": "GET",
+          "path": "/repos/{owner}/{repo}/pulls",
+          "query": {
+            "state": "all",
+            "per_page": 100,
+            "page": 1
+          }
+        },
+        "list_commits": {
+          "method": "GET",
+          "path": "/repos/{owner}/{repo}/commits",
+          "query": {
+            "per_page": 100,
+            "page": 1
+          }
+        },
+        "get_branch_protection": {
+          "method": "GET",
+          "path": "/repos/{owner}/{repo}/branches/{branch}/protection",
+          "defaults": {
+            "branch": "main"
+          }
+        },
+        "list_dependabot_alerts": {
+          "method": "GET",
+          "path": "/repos/{owner}/{repo}/dependabot/alerts",
+          "query": {
+            "state": "open",
+            "per_page": 100,
+            "page": 1
+          }
+        },
+        "list_code_scanning_alerts": {
+          "method": "GET",
+          "path": "/repos/{owner}/{repo}/code-scanning/alerts",
+          "query": {
+            "state": "open",
+            "per_page": 100,
+            "page": 1
+          }
+        }
+      }
+    },
+    "gitlab": {
+      "auth": "bearer",
+      "tools": {
+        "list_project_members": {
+          "method": "GET",
+          "path": "/projects/{projectPath}/members/all",
+          "query": {
+            "per_page": 100,
+            "page": 1
+          }
+        },
+        "list_vulnerability_findings": {
+          "method": "GET",
+          "path": "/projects/{projectPath}/vulnerability_findings",
+          "query": {
+            "per_page": 100,
+            "page": 1
+          }
+        },
+        "get_project_protected_branches": {
+          "method": "GET",
+          "path": "/projects/{projectPath}/protected_branches"
+        },
+        "list_merge_requests": {
+          "method": "GET",
+          "path": "/projects/{projectPath}/merge_requests",
+          "query": {
+            "state": "all",
+            "per_page": 100,
+            "page": 1
+          }
+        },
+        "list_pipeline_jobs": {
+          "method": "GET",
+          "path": "/projects/{projectPath}/jobs",
+          "query": {
+            "per_page": 100,
+            "page": 1
+          }
+        }
+      }
+    },
+    "bitbucket": {
+      "auth": "bearer",
+      "tools": {
+        "bb_ls_users": {
+          "method": "GET",
+          "path": "/repositories/{owner}/{repo}/permissions-config/users",
+          "query": {
+            "pagelen": 100
+          }
+        },
+        "list_branch_restrictions": {
+          "method": "GET",
+          "path": "/repositories/{owner}/{repo}/branch-restrictions",
+          "query": {
+            "pagelen": 100
+          }
+        },
+        "list_pullrequests": {
+          "method": "GET",
+          "path": "/repositories/{owner}/{repo}/pullrequests",
+          "query": {
+            "state": "ALL",
+            "pagelen": 100
+          }
+        },
+        "bb_list_pipelines": {
+          "method": "GET",
+          "path": "/repositories/{owner}/{repo}/pipelines",
+          "query": {
+            "pagelen": 100
+          }
+        },
+        "bb_list_vulnerabilities": {
+          "method": "GET",
+          "path": "/repositories/{owner}/{repo}/security/alerts",
+          "query": {
+            "state": "open",
+            "pagelen": 100
+          }
+        }
+      }
+    }
+  }
+}
