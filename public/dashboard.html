@@ -4,60 +4,22 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Provider Dashboard</title>
-    <link rel="stylesheet" href="/styles.css" />
+    <style>
+      html, body, #root {
+        margin: 0;
+        min-height: 100%;
+        background: #ffffff;
+      }
+    </style>
   </head>
   <body>
-    <main class="shell">
-      <header class="hero">
-        <h1 id="dashboardTitle">Dashboard</h1>
-        <p>OAuth connection status.</p>
-      </header>
-
-      <section class="panel">
-        <h2>Connection</h2>
-        <div class="form-grid">
-          <div>
-            <span id="statusPill" class="status-pill disconnected">Disconnected</span>
-          </div>
-        </div>
-        <button id="disconnectBtn" class="secondary">Logout</button>
-      </section>
-
-      <section class="panel">
-        <h2>Repository</h2>
-        <label>
-          Repo Selector
-          <div class="repo-picker" id="repoPicker">
-            <button id="repoPickerToggle" type="button" class="repo-picker-toggle">Loading repositories...</button>
-            <div id="repoPickerMenu" class="repo-picker-menu" hidden>
-              <div class="repo-picker-actions">
-                <button id="repoSelectAllBtn" type="button" class="secondary">Select all</button>
-                <button id="repoClearAllBtn" type="button" class="secondary">Clear</button>
-              </div>
-              <div id="repoPickerList" class="repo-picker-list"></div>
-            </div>
-          </div>
-        </label>
-      </section>
-
-      <section id="complianceSection" class="panel" hidden>
-        <h2>Compliance</h2>
-        <label>
-          Compliance Selector
-          <select id="complianceSelect">
-            <option value="">Select compliance</option>
-            <option value="iso27001">ISO 27001</option>
-            <option value="soc2">SOC 2</option>
-          </select>
-        </label>
-        <button id="runComplianceTestBtn">Run Compliance Test</button>
-      </section>
-
-      <section id="resultSection" class="panel" hidden>
-        <h2>Test Result</h2>
-        <div id="resultBox" class="result-box">No result yet.</div>
-      </section>
-    </main>
-    <script type="module" src="/dashboard.js"></script>
+    <div id="root"></div>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/@emotion/react@11/dist/emotion-react.umd.min.js"></script>
+    <script crossorigin src="https://unpkg.com/@emotion/styled@11/dist/emotion-styled.umd.min.js"></script>
+    <script crossorigin src="https://unpkg.com/@mui/material@5/umd/material-ui.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script type="text/babel" data-presets="env,react" src="/dashboard-react.js"></script>
   </body>
 </html>

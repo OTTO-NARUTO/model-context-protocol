@@ -13,13 +13,13 @@ export default class EvaluationEngine {
         answer: "Unable to determine due to MCP tool error.",
         findings: `MCP Tool Error: ${message}`,
         metadata: { error: true, controlId: resolvedContext.controlId }
-      });
+      }, null, resolvedContext);
     }
 
     const payload = this._parseMcpContent(evidenceData);
     const requirementVerdict = this.evaluateByRequirementType(payload, resolvedContext);
     if (requirementVerdict) {
-      return this._withComplianceFlag(requirementVerdict, payload);
+      return this._withComplianceFlag(requirementVerdict, payload, resolvedContext);
     }
     const strategy = this._resolveStrategy(resolvedContext, payload);
 
@@ -44,7 +44,7 @@ export default class EvaluationEngine {
         verdict = this.defaultEvaluation(resolvedContext);
         break;
     }
-    return this._withComplianceFlag(verdict, payload);
+    return this._withComplianceFlag(verdict, payload, resolvedContext);
   }
 
   evaluateByRequirementType(payload, context = {}) {
@@ -909,24 +909,126 @@ export default class EvaluationEngine {
     return "";
   }
 
-  _withComplianceFlag(verdict, payload = null) {
+  _withComplianceFlag(verdict, payload = null, context = {}) {
     const status = String(verdict?.status ?? "").toUpperCase();
     const compliant = status === "COMPLIANT"
       ? true
       : status === "NON_COMPLIANT"
         ? false
         : null;
-    const findings = String(verdict?.findings ?? "").trim();
+    const baseAnswer = String(verdict?.answer ?? "").trim();
+    const baseFindings = String(verdict?.findings ?? "").trim();
+    const dynamicNarrative = this._buildDynamicNarrative(status, verdict?.metadata ?? {}, context);
+    const answer = dynamicNarrative.answer || baseAnswer;
+    const findings = dynamicNarrative.findings || baseFindings;
     const failReason = compliant === true
       ? ""
       : (findings || "Evaluation could not confirm compliance from the available evidence.");
     const evidenceSnapshot = this._sanitizeSnapshot(this._buildEvidenceSnapshot(payload, verdict?.metadata ?? {}));
     return {
       ...verdict,
+      answer,
+      findings,
       compliant,
       failReason,
       evidenceSnapshot
     };
+  }
+
+  _buildDynamicNarrative(status, metadata = {}, context = {}) {
+    const controlId = String(context?.controlId ?? "").trim();
+    const controlName = String(context?.controlName ?? "").trim();
+    const provider = String(context?.provider ?? "").trim();
+    const evidenceSource = String(context?.evidenceSource ?? "").trim();
+    const descriptor = controlId
+      ? `Control ${controlId}${controlName ? ` (${controlName})` : ""}`
+      : "Selected control";
+    const providerText = provider ? ` for ${provider}` : "";
+    const metricSummary = this._summarizeMetrics(metadata);
+    const question = String(context?.question ?? "").trim();
+    const questionText = question ? ` Question checked: ${question}.` : "";
+    const evidenceText = evidenceSource ? ` Evidence source: ${evidenceSource}.` : "";
+
+    if (status === "COMPLIANT") {
+      return {
+        answer: `${descriptor}${providerText} is compliant.${metricSummary ? ` ${metricSummary}.` : ""}${questionText}`,
+        findings: `${descriptor} passed with status COMPLIANT.${metricSummary ? ` ${metricSummary}.` : ""}${evidenceText}`
+      };
+    }
+
+    if (status === "NON_COMPLIANT") {
+      return {
+        answer: `${descriptor}${providerText} is non-compliant.${metricSummary ? ` ${metricSummary}.` : ""}${questionText}`,
+        findings: `${descriptor} failed with status NON_COMPLIANT.${metricSummary ? ` ${metricSummary}.` : ""}${evidenceText}`
+      };
+    }
+
+    if (status === "ERROR") {
+      return {
+        answer: `${descriptor}${providerText} could not be evaluated due to an execution error.${questionText}`,
+        findings: `${descriptor} evaluation returned ERROR.${metricSummary ? ` ${metricSummary}.` : ""}${evidenceText}`
+      };
+    }
+
+    return {
+      answer: `${descriptor}${providerText} is undetermined with the current evidence.${metricSummary ? ` ${metricSummary}.` : ""}${questionText}`,
+      findings: `${descriptor} returned UNDETERMINED because evidence was incomplete or ambiguous.${metricSummary ? ` ${metricSummary}.` : ""}${evidenceText}`
+    };
+  }
+
+  _summarizeMetrics(metadata = {}) {
+    const strategy = String(metadata?.strategy ?? "").toLowerCase();
+
+    if (strategy === "identity") {
+      const totalMembers = Number(metadata?.totalMembers ?? 0);
+      const adminLikeCount = Number(metadata?.adminLikeCount ?? 0);
+      const maxAllowedAdminLike = Number(metadata?.maxAllowedAdminLike ?? 0);
+      const unknownCount = Number(metadata?.unknownCount ?? 0);
+      const repositoryVisibility = String(metadata?.repositoryVisibility ?? "unknown");
+      return `members=${totalMembers}, elevated_roles=${adminLikeCount}, allowed_elevated=${maxAllowedAdminLike}, unknown_roles=${unknownCount}, visibility=${repositoryVisibility}`;
+    }
+
+    if (strategy === "branch_protection") {
+      const totalChecked = Number(metadata?.totalChecked ?? 0);
+      const protectedCount = Number(metadata?.protectedCount ?? 0);
+      const criticalMissing = Array.isArray(metadata?.unprotectedCriticalBranches)
+        ? metadata.unprotectedCriticalBranches.length
+        : 0;
+      return `checked_branches=${totalChecked}, protected_branches=${protectedCount}, unprotected_critical=${criticalMissing}`;
+    }
+
+    if (strategy === "review_process") {
+      const totalChecked = Number(metadata?.totalChecked ?? 0);
+      const reviewedCount = Number(metadata?.reviewedCount ?? 0);
+      const threshold = Number(metadata?.threshold ?? 0);
+      const coverageRaw = Number(metadata?.reviewCoverage ?? 0);
+      const reviewCoverage = Number.isFinite(coverageRaw) ? Math.round(coverageRaw * 100) : 0;
+      return `checked_changes=${totalChecked}, reviewed_changes=${reviewedCount}, review_coverage=${reviewCoverage}%, min_reviews=${threshold}`;
+    }
+
+    if (strategy === "security_testing") {
+      const totalChecked = Number(metadata?.totalChecked ?? 0);
+      const successCount = Number(metadata?.successCount ?? 0);
+      const failCount = Number(metadata?.failCount ?? 0);
+      return `checked_records=${totalChecked}, successful_checks=${successCount}, failed_checks=${failCount}`;
+    }
+
+    if (strategy === "vulnerabilities") {
+      const totalIssues = Number(metadata?.totalIssues ?? metadata?.totalChecked ?? 0);
+      const securityIssueCount = Number(metadata?.securityIssueCount ?? metadata?.violatingCount ?? 0);
+      return `total_issues=${totalIssues}, violating_security_issues=${securityIssueCount}`;
+    }
+
+    if (
+      Object.prototype.hasOwnProperty.call(metadata, "observedCount") ||
+      Object.prototype.hasOwnProperty.call(metadata, "threshold")
+    ) {
+      const observedCount = Number(metadata?.observedCount ?? 0);
+      const threshold = Number(metadata?.threshold ?? 0);
+      return `observed=${observedCount}, threshold=${threshold}`;
+    }
+
+    return "";
   }
 
   _buildEvidenceSnapshot(payload, metadata = {}) {

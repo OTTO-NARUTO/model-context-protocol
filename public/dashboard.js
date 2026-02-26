@@ -342,11 +342,19 @@ function getComplianceResultText(item) {
 
 function buildStatusChip(item, status, statusClass) {
   const normalizedStatus = String(status ?? "").toUpperCase();
-  if (normalizedStatus !== "NON_COMPLIANT") {
+  const reasonCandidates = [
+    item?.fail_reason,
+    item?.findings,
+    item?.answer
+  ];
+  const reason = reasonCandidates
+    .map((value) => String(value ?? "").trim())
+    .find(Boolean) ?? "";
+
+  if (!reason) {
     return `<span class="status-chip ${statusClass}">${escapeHtml(normalizedStatus)}</span>`;
   }
 
-  const reason = String(item?.fail_reason ?? item?.findings ?? "No reason provided.").trim();
   const title = escapeHtml(reason).replaceAll("\n", " ");
   return `<span class="status-chip ${statusClass} with-reason" title="${title}">${escapeHtml(normalizedStatus)}</span>`;
 }
