@@ -13,7 +13,6 @@ const complianceSelect = document.getElementById("complianceSelect");
 const runComplianceTestBtn = document.getElementById("runComplianceTestBtn");
 const resultSection = document.getElementById("resultSection");
 const resultBox = document.getElementById("resultBox");
-const SINGLE_TENANT_ID = "tenant-acme";
 const AUTO_LOGOUT_MS = 30 * 60 * 1000;
 let logoutTimerId = null;
 let logoutInProgress = false;
@@ -26,10 +25,6 @@ const complianceStandardMap = {
 };
 
 dashboardTitle.textContent = `${provider} Dashboard`;
-
-function tenantHeader() {
-  return { "x-tenant-id": SINGLE_TENANT_ID };
-}
 
 function updateComplianceVisibility() {
   const hasRepo = getSelectedRepos().length > 0;
@@ -96,13 +91,7 @@ function renderRepoPickerList() {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {
-    ...options,
-    headers: {
-      ...(options.headers || {}),
-      ...tenantHeader()
-    }
-  });
+  const response = await fetch(path, options);
 
   if (!response.ok) {
     const text = await response.text();
@@ -176,7 +165,7 @@ async function runComplianceTest() {
   }
 
   resultSection.hidden = false;
-  resultBox.textContent = "Running compliance test...";
+  resultBox.innerHTML = buildLoadingMarkup();
 
   try {
     const result = await api("/api/compliance/evaluate-standard", {
@@ -210,6 +199,8 @@ function renderResultTable(result) {
     const component = escapeHtml(String(item?.component ?? item?.control_component ?? item?.evidence_source ?? "-"));
     const status = String(item?.status ?? "UNDETERMINED").toUpperCase();
     const statusClass = statusToClass(status);
+    const resultText = getComplianceResultText(item);
+    const statusChip = buildStatusChip(item, status, statusClass);
 
     return `
       <tr>
@@ -217,7 +208,8 @@ function renderResultTable(result) {
         <td>${controlId}</td>
         <td>${controlName}</td>
         <td>${component}</td>
-        <td><span class="status-chip ${statusClass}">${escapeHtml(status)}</span></td>
+        <td>${statusChip}</td>
+        <td>${escapeHtml(resultText)}</td>
         <td>${repository}</td>
       </tr>
     `;
@@ -248,15 +240,18 @@ function renderResultTable(result) {
   const complianceRows = rows.map((item) => {
     const repository = escapeHtml(String(item?.repository ?? result?.repository ?? "-"));
     const controlId = escapeHtml(String(item?.control ?? "-"));
-    const standard = escapeHtml(String(result?.standard ?? "-"));
+    const controlName = escapeHtml(String(item?.description ?? item?.control_name ?? "-"));
     const status = String(item?.status ?? "UNDETERMINED").toUpperCase();
     const statusClass = statusToClass(status);
+    const resultText = getComplianceResultText(item);
+    const statusChip = buildStatusChip(item, status, statusClass);
 
     return `
       <tr>
-        <td>${standard}</td>
         <td>${controlId}</td>
-        <td><span class="status-chip ${statusClass}">${escapeHtml(status)}</span></td>
+        <td>${controlName}</td>
+        <td>${statusChip}</td>
+        <td>${escapeHtml(resultText)}</td>
         <td>${repository}</td>
       </tr>
     `;
@@ -278,6 +273,7 @@ function renderResultTable(result) {
               <th>Control Name</th>
               <th>Control Component</th>
               <th>Status</th>
+              <th>Result</th>
               <th>Repository</th>
             </tr>
           </thead>
@@ -292,9 +288,10 @@ function renderResultTable(result) {
         <table class="result-table">
           <thead>
             <tr>
-              <th>Compliance</th>
               <th>Control ID</th>
+              <th>Control Name</th>
               <th>Status</th>
+              <th>Result</th>
               <th>Repository</th>
             </tr>
           </thead>
@@ -334,6 +331,34 @@ function statusToClass(status) {
   return "unknown";
 }
 
+function getComplianceResultText(item) {
+  if (item?.compliant === true) return "Compliant";
+  if (item?.compliant === false) return "Not Compliant";
+  const status = String(item?.status ?? "").toUpperCase();
+  if (status === "COMPLIANT") return "Compliant";
+  if (status === "NON_COMPLIANT") return "Not Compliant";
+  return "Undetermined";
+}
+
+function buildStatusChip(item, status, statusClass) {
+  const normalizedStatus = String(status ?? "").toUpperCase();
+  const reasonCandidates = [
+    item?.fail_reason,
+    item?.findings,
+    item?.answer
+  ];
+  const reason = reasonCandidates
+    .map((value) => String(value ?? "").trim())
+    .find(Boolean) ?? "";
+
+  if (!reason) {
+    return `<span class="status-chip ${statusClass}">${escapeHtml(normalizedStatus)}</span>`;
+  }
+
+  const title = escapeHtml(reason).replaceAll("\n", " ");
+  return `<span class="status-chip ${statusClass} with-reason" title="${title}">${escapeHtml(normalizedStatus)}</span>`;
+}
+
 function escapeHtml(value) {
   return value
     .replaceAll("&", "&amp;")
@@ -341,6 +366,15 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function buildLoadingMarkup() {
+  return `
+    <div class="loading-state" role="status" aria-live="polite">
+      <img class="loading-dog" src="/loading/pixel-dog.svg" alt="Pixel dog loading animation" />
+      <p class="loading-text">One moment please...</p>
+    </div>
+  `;
 }
 
 disconnectBtn.addEventListener("click", async () => {

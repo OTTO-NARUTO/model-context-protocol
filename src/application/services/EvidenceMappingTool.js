@@ -1,7 +1,3 @@
-/**
- * EvidenceMappingTool
- * Responsibility: Maps compliance controls to specific MCP tool calls.
- */
 export default class EvidenceMappingTool {
   constructor(isoRepoData, soc2RepoData) {
     this.controls = [

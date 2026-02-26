@@ -1,5 +1,7 @@
 import { isProvider } from "../../domain/entities/provider.js";
 import { env } from "../../config/env.js";
+import { randomUUID } from "crypto";
+import { buildTenantSessionCookie, createTenantSessionToken } from "../../infrastructure/security/tenantSessionUtil.js";
 
 export class AuthController {
   constructor(oauthService) {
@@ -13,7 +15,7 @@ export class AuthController {
         res.status(400).json({ error: "Invalid provider." });
         return;
       }
-      const tenantId = req.tenantId;
+      const tenantId = req.tenantId || randomUUID();
       const url = await this.oauthService.getConnectUrl(providerValue, tenantId);
       res.redirect(url);
     } catch (error) {
@@ -36,9 +38,15 @@ export class AuthController {
         return;
       }
       const output = await this.oauthService.handleCallback(providerValue, code, state);
+      const maxAgeMs = env.TENANT_SESSION_TTL_MINUTES * 60 * 1000;
+      const token = createTenantSessionToken(
+        output.tenantId,
+        env.TENANT_SESSION_SECRET,
+        env.TENANT_SESSION_TTL_MINUTES
+      );
+      res.setHeader("Set-Cookie", buildTenantSessionCookie(token, maxAgeMs, env.NODE_ENV === "production"));
       const redirect = new URL(`/dashboard/${providerValue}`, env.FRONTEND_BASE_URL);
       redirect.searchParams.set("connected", "true");
-      redirect.searchParams.set("tenant", output.tenantId);
       res.redirect(redirect.toString());
     } catch (error) {
       const message = error instanceof Error ? error.message : "OAuth callback failed.";
