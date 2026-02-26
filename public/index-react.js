@@ -3,7 +3,6 @@ const {
   Alert,
   Box,
   Button,
-  Chip,
   Container,
   CssBaseline,
   Grid,
@@ -15,6 +14,11 @@ const {
 } = MaterialUI;
 
 const providers = ["github", "gitlab", "bitbucket"];
+const providerLogoMap = {
+  github: "https://cdn.simpleicons.org/github/1f2937",
+  gitlab: "https://cdn.simpleicons.org/gitlab/FC6D26",
+  bitbucket: "https://cdn.simpleicons.org/bitbucket/0068D1"
+};
 
 const theme = createTheme({
   palette: {
@@ -69,52 +73,105 @@ function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <Container maxWidth="md" sx={{ py: 5 }}>
-        <Stack spacing={2.5}>
-          <Paper elevation={0} sx={{ p: 3, border: "1px solid #d9e8f9" }}>
-            <Typography variant="h4" sx={{ color: "#0068D1", fontWeight: 800 }}>
-              Change Evidence Report
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Select a version control and connect using OAuth.
-            </Typography>
-          </Paper>
+      <Box sx={{ minHeight: "100vh", bgcolor: "#FFFFFF", display: "flex", alignItems: "center" }}>
+        <Container maxWidth="lg" sx={{ py: 6 }}>
+          <Stack spacing={4}>
+            <Stack spacing={1} alignItems="center" textAlign="center">
+              <Typography variant="h3" sx={{ color: "#0068D1", fontWeight: 800 }}>
+                Connect Your Version Control
+              </Typography>
+              <Typography variant="body1" sx={{ color: "#4a6380" }}>
+                Choose your preferred version control platform to get started
+              </Typography>
+            </Stack>
 
-          {error && <Alert severity="error">{error}</Alert>}
+            {error && <Alert severity="error">{error}</Alert>}
 
-          <Paper elevation={0} sx={{ p: 3, border: "1px solid #d9e8f9" }}>
-            <Typography variant="h6" sx={{ mb: 2 }}>Version Controls</Typography>
-            <Grid container spacing={2}>
-              {statuses.map((status) => (
-                <Grid item xs={12} sm={6} md={4} key={status.provider}>
-                  <Paper variant="outlined" sx={{ p: 2, borderColor: "#d9e8f9" }}>
-                    <Stack spacing={1.25}>
-                      <Typography sx={{ fontWeight: 700, textTransform: "capitalize" }}>
+            <Grid container spacing={3}>
+              {statuses.map((status) => {
+                const providerName = String(status.provider || "").toLowerCase();
+                const details = providerName === "github"
+                  ? "Connect your GitHub repositories to sync your projects and collaborate with your team."
+                  : providerName === "gitlab"
+                    ? "Integrate with GitLab for seamless CI/CD pipelines and project management."
+                    : "Connect Bitbucket to manage your repositories with Atlassian's powerful tools.";
+                const label = providerName === "github"
+                  ? "Connect to GitHub"
+                  : providerName === "gitlab"
+                    ? "Connect to GitLab"
+                    : "Connect to Bitbucket";
+
+                return (
+                  <Grid item xs={12} md={4} key={status.provider}>
+                    <Paper
+                      elevation={0}
+                      sx={{
+                        p: 3,
+                        border: "1px solid #d7e6f7",
+                        borderRadius: 3,
+                        height: "100%",
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                        textAlign: "center",
+                        gap: 2,
+                        transition: "all 220ms ease",
+                        "&:hover": {
+                          borderColor: "#9cc7f0",
+                          boxShadow: "0 10px 30px rgba(0, 104, 209, 0.12)",
+                          transform: "translateY(-3px)"
+                        }
+                      }}
+                    >
+                      <Box
+                        sx={{
+                          width: 58,
+                          height: 58,
+                          borderRadius: 2,
+                          bgcolor: "#f1f7ff",
+                          border: "1px solid #d9e8f9",
+                          display: "grid",
+                          placeItems: "center"
+                        }}
+                      >
+                        <Box
+                          component="img"
+                          src={providerLogoMap[providerName]}
+                          alt={`${status.provider} logo`}
+                          sx={{ width: 30, height: 30 }}
+                        />
+                      </Box>
+
+                      <Typography variant="h5" sx={{ fontWeight: 800, color: "#0f172a", textTransform: "capitalize" }}>
                         {status.provider}
                       </Typography>
-                      <Chip
-                        label={status.connected ? "Connected" : "Disconnected"}
-                        color={status.connected ? "success" : "error"}
-                        size="small"
-                        sx={{ width: "fit-content", fontWeight: 700 }}
-                      />
-                      <Box>
-                        <Button
-                          variant="contained"
-                          onClick={() => connect(status.provider)}
-                          sx={{ bgcolor: "#0068D1", "&:hover": { bgcolor: "#0058b3" } }}
-                        >
-                          Connect
-                        </Button>
-                      </Box>
-                    </Stack>
-                  </Paper>
-                </Grid>
-              ))}
+
+                      <Typography variant="body2" sx={{ color: "#4a6380", minHeight: 64 }}>
+                        {details}
+                      </Typography>
+
+                      <Button
+                        fullWidth
+                        variant="contained"
+                        onClick={() => connect(status.provider)}
+                        sx={{
+                          mt: "auto",
+                          bgcolor: "#0068D1",
+                          borderRadius: 2,
+                          py: 1.1,
+                          "&:hover": { bgcolor: "#0058b3" }
+                        }}
+                      >
+                        {label}
+                      </Button>
+                    </Paper>
+                  </Grid>
+                );
+              })}
             </Grid>
-          </Paper>
-        </Stack>
-      </Container>
+          </Stack>
+        </Container>
+      </Box>
     </ThemeProvider>
   );
 }
