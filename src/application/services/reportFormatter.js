@@ -27,6 +27,8 @@ export class ReportFormatter {
       status,
       passed,
       reason: String(result?.fail_reason ?? "").trim() || DEFAULT_REASON,
+      api_call: String(result?.api_call ?? "UNKNOWN"),
+      api_call_reason: String(result?.api_call_reason ?? ""),
       evaluated_at: String(result?.evaluated_at ?? ""),
       evidence_source: String(result?.evidence_source ?? ""),
       tool_used: String(result?.tool_used ?? "")
@@ -57,6 +59,7 @@ export class ReportFormatter {
       "Control ID",
       "Control Name",
       "Status",
+      "API Call",
       "Reason",
       "Evaluated At"
     ];

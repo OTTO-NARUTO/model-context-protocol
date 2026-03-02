@@ -1,0 +1,27 @@
+flowchart LR
+    A[React dashboard sends compliance request] --> B[Backend API receives request]
+    B --> C[ComplianceController validates input]
+    C --> D[OAuthService gets provider token]
+    D --> E[Resolve mapped tools and logic]
+    E --> F[Collect evidence with ToolExecutionStrategy]
+    F --> G{ToolResolver selects mode}
+
+    G -. decision logic .-> GX[Use MCP when tool is exposed and supported then apply preference then fallback to REST]
+
+    G -->|MCP| H[Backend McpClient]
+    H --> H1[Select provider MCP URL from env]
+    H1 --> H2[Post JSON RPC tools call]
+    H2 --> H3{Provider}
+    H3 -->|github| H4[GitHub MCP server]
+    H3 -->|gitlab| H5[GitLab MCP server]
+    H3 -->|bitbucket| H6[Bitbucket MCP server]
+    H4 --> J[Normalize evidence payload]
+    H5 --> J
+    H6 --> J
+
+    G -->|REST fallback| I[REST fallback client calls provider REST API]
+    I --> J
+
+    J --> K[EvaluationEngine evaluates evidence]
+    K --> L[ReportFormatter builds summary and table]
+    L --> M[Backend returns compliance report JSON]

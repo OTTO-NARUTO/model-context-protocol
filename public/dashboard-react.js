@@ -82,6 +82,12 @@ function getHumanReadableReason(item) {
   return "Insufficient or unclear evidence to determine compliance.";
 }
 
+function getApiCallSummary(item) {
+  const mode = String(item?.api_call || "").trim().toUpperCase() || "UNKNOWN";
+  const reason = String(item?.api_call_reason || "").trim();
+  return reason ? `${mode}: ${reason}` : mode;
+}
+
 function NotificationToast({ message, severity = "info" }) {
   const variant = String(severity || "info").toLowerCase();
   const palette = {
@@ -433,7 +439,7 @@ function App() {
                           <TableCell>Control ID</TableCell>
                           <TableCell>Control Name</TableCell>
                           <TableCell>Status</TableCell>
-                          <TableCell>Result</TableCell>
+                          <TableCell>API Call (Why)</TableCell>
                           <TableCell>Reason</TableCell>
                           <TableCell>Repository</TableCell>
                         </TableRow>
@@ -442,22 +448,13 @@ function App() {
                         {rows.map((item, index) => {
                           const status = String(item?.status || "UNDETERMINED").toUpperCase();
                           const reason = getHumanReadableReason(item);
-                          const resultText =
-                            item?.passed === true
-                              ? "Pass"
-                              : item?.passed === false
-                                ? "Fail"
-                                : status === "PASS"
-                                  ? "Pass"
-                                  : status === "FAIL"
-                                    ? "Fail"
-                                    : "Undetermined";
+                          const apiCall = getApiCallSummary(item);
                           return (
                             <TableRow key={`${item?.repository || "repo"}-${item?.control || "ctrl"}-${index}`}>
                               <TableCell>{String(item?.control || "-")}</TableCell>
                               <TableCell>{String(item?.description || item?.control_name || "-")}</TableCell>
                               <TableCell>{statusChip(status)}</TableCell>
-                              <TableCell>{resultText}</TableCell>
+                              <TableCell>{apiCall}</TableCell>
                               <TableCell>{reason}</TableCell>
                               <TableCell>{String(item?.repository || result?.repository || "-")}</TableCell>
                             </TableRow>
