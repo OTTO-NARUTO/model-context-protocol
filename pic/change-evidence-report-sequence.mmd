@@ -1,0 +1,156 @@
+﻿sequenceDiagram
+autonumber
+actor PU as Platform User
+participant FE as Browser UI
+participant APP as Express App
+participant TM as Tenant Middleware
+participant VM as Validation Middleware
+participant AC as Auth Controller
+participant CC as Compliance Controller
+participant OS as OAuth Service
+participant DB as Database
+participant ENC as Encryption
+participant TS as Tenant Session
+participant STR as Tool Strategy
+participant RES as Tool Resolver
+participant MCP as MCP Client
+participant REST as REST Client
+participant RN as Response Normalizer
+participant EE as Evaluation Engine
+participant RF as Report Formatter
+participant OP as OAuth Provider
+participant EMCP as External MCP Server
+participant API as Provider REST API
+
+rect rgb(230, 242, 255)
+Note over PU,FE: Client Actions
+PU->>FE: Open app
+FE->>APP: GET /api/auth/{provider}/status
+end
+
+rect rgb(232, 255, 238)
+Note over APP,RF: Our System (App, DB, Services)
+APP->>TM: Validate tenant session cookie
+TM->>TS: Verify token
+alt valid session
+  TS-->>TM: tenantId
+  TM-->>APP: next
+  APP->>VM: Validate request
+  APP->>AC: status
+  AC->>OS: status(provider, tenantId)
+  OS->>DB: getToken
+  DB-->>OS: token or null
+  OS-->>AC: connected flag
+  AC-->>FE: status response
+else invalid session
+  TM-->>FE: 401
+end
+end
+
+rect rgb(230, 242, 255)
+PU->>FE: Click connect
+FE->>APP: GET /api/auth/{provider}/connect
+end
+
+rect rgb(232, 255, 238)
+APP->>TM: tenant middleware
+TM-->>APP: allow
+APP->>VM: Validate provider
+APP->>AC: connect
+AC->>OS: getConnectUrl
+OS->>DB: saveOAuthState
+OS-->>AC: authorize URL
+AC-->>FE: redirect
+end
+
+rect rgb(255, 239, 230)
+Note over OP,API: External Servers (GitHub/GitLab/Bitbucket)
+FE->>OP: authorize
+OP-->>FE: callback with code and state
+end
+
+rect rgb(232, 255, 238)
+FE->>APP: GET callback
+APP->>TM: callback bypass
+APP->>VM: Validate params
+APP->>AC: callback
+AC->>OS: handleCallback
+OS->>DB: getOAuthState
+alt invalid state
+  OS-->>AC: error
+  AC-->>FE: error response
+else valid state
+  OS->>DB: deleteOAuthState
+  OS->>OP: exchange code for token
+  OP-->>OS: access token
+  OS->>ENC: encrypt token
+  OS->>DB: upsertToken
+  AC->>TS: create session token
+  TS-->>AC: signed cookie
+  AC-->>FE: set cookie and redirect dashboard
+end
+
+FE->>APP: GET repos list
+APP->>TM: verify session
+APP->>VM: Validate query
+APP->>AC: repos
+AC->>OS: listRepos
+OS->>DB: getToken
+OS->>ENC: decrypt token
+OS->>API: fetch repos
+API-->>OS: repos payload
+OS-->>AC: normalized repos
+AC-->>FE: repos response
+end
+
+rect rgb(230, 242, 255)
+PU->>FE: Run compliance check
+FE->>APP: POST /api/compliance/evaluate-standard
+end
+
+rect rgb(232, 255, 238)
+APP->>TM: verify session
+APP->>VM: Validate body
+APP->>CC: evaluateStandard
+CC->>CC: Filter ISO27001 controls to 8.8, 8.9
+CC->>OS: getAccessToken
+OS->>DB: getToken
+OS->>ENC: decrypt token
+OS-->>CC: access token
+
+loop each selected repo
+  loop control 8.8, 8.9
+  CC->>STR: executeTool
+  STR->>MCP: listTools
+  alt MCP available
+    MCP->>EMCP: tools/list or tools/call
+    EMCP-->>MCP: evidence
+    MCP-->>STR: MCP evidence
+  else fallback
+    STR->>REST: callTool
+    REST->>API: REST call
+    API-->>REST: REST evidence
+    REST-->>STR: fallback evidence
+  end
+  STR->>RES: resolve mode
+  STR->>RN: normalize evidence
+  RN-->>STR: standardized payload
+  STR-->>CC: evidence
+  CC->>EE: evaluate control
+  EE-->>CC: verdict
+  CC->>RF: format report row
+  RF-->>CC: row
+  end
+end
+
+CC-->>FE: final report response
+FE-->>PU: render results
+
+opt disconnect
+  FE->>APP: POST /api/auth/{provider}/disconnect
+  APP->>AC: disconnect
+  AC->>OS: revoke and delete token
+  OS->>DB: deleteToken
+  AC-->>FE: disconnected
+end
+end

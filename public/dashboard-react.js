@@ -17,8 +17,6 @@ const {
   Paper,
   Stack,
   Snackbar,
-  Tab,
-  Tabs,
   Table,
   TableBody,
   TableCell,
@@ -34,8 +32,7 @@ const {
 const provider = window.location.pathname.split("/").filter(Boolean).pop();
 const AUTO_LOGOUT_MS = 30 * 60 * 1000;
 const complianceStandardMap = {
-  iso27001: "ISO27001",
-  soc2: "SOC2"
+  iso27001: "ISO27001"
 };
 
 const theme = createTheme({
@@ -57,8 +54,8 @@ const theme = createTheme({
 function statusChip(status, detailText) {
   const normalized = String(status || "UNDETERMINED").toUpperCase();
   const colorMap = {
-    COMPLIANT: "success",
-    NON_COMPLIANT: "error",
+    PASS: "success",
+    FAIL: "error",
     ERROR: "error",
     UNDETERMINED: "default"
   };
@@ -72,6 +69,17 @@ function statusChip(status, detailText) {
     />
   );
   return detailText ? <Tooltip title={detailText}><Box component="span">{chip}</Box></Tooltip> : chip;
+}
+
+function getHumanReadableReason(item) {
+  const text = String(item?.fail_reason || item?.findings || item?.answer || "").trim();
+  if (text) return text;
+
+  const status = String(item?.status || "UNDETERMINED").toUpperCase();
+  if (status === "PASS") return "Control passed based on the available repository evidence.";
+  if (status === "FAIL") return "Control failed based on the available repository evidence.";
+  if (status === "ERROR") return "Evaluation failed due to a tool or processing error.";
+  return "Insufficient or unclear evidence to determine compliance.";
 }
 
 function NotificationToast({ message, severity = "info" }) {
@@ -140,12 +148,11 @@ function App() {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState(null);
-  const [tab, setTab] = useState(0);
   const [snackbar, setSnackbar] = useState({ open: false, message: "", severity: "info" });
 
   const summary = useMemo(() => {
     const rows = Array.isArray(result?.results) ? result.results : [];
-    const out = { COMPLIANT: 0, NON_COMPLIANT: 0, ERROR: 0, UNDETERMINED: 0 };
+    const out = { PASS: 0, FAIL: 0, ERROR: 0, UNDETERMINED: 0 };
     for (const row of rows) {
       const key = String(row?.status || "UNDETERMINED").toUpperCase();
       out[key] = Number(out[key] || 0) + 1;
@@ -253,7 +260,6 @@ function App() {
         })
       });
       setResult(body);
-      setTab(0);
     } catch (runError) {
       setError(String(runError));
     } finally {
@@ -357,24 +363,7 @@ function App() {
           <Paper elevation={0} sx={{ p: 2.5, border: "1px solid #d8dee8", borderRadius: 2.5 }}>
             <Typography variant="h6" sx={{ color: "#111827", fontWeight: 700, mb: 2 }}>Select Compliance Standard</Typography>
             <Grid container spacing={1.5}>
-              <Grid item xs={12} md={6}>
-                <Button
-                  fullWidth
-                  variant={selectedCompliance === "soc2" ? "contained" : "outlined"}
-                  onClick={() => setSelectedCompliance("soc2")}
-                  sx={{
-                    justifyContent: "flex-start",
-                    py: 1.2,
-                    color: selectedCompliance === "soc2" ? "#fff" : "#0f172a",
-                    bgcolor: selectedCompliance === "soc2" ? "#0068D1" : "#fff",
-                    borderColor: "#d0d7e2",
-                    "&:hover": { bgcolor: selectedCompliance === "soc2" ? "#0058b3" : "#f8fbff" }
-                  }}
-                >
-                  SOC 2
-                </Button>
-              </Grid>
-              <Grid item xs={12} md={6}>
+              <Grid item xs={12} md={12}>
                 <Button
                   fullWidth
                   variant={selectedCompliance === "iso27001" ? "contained" : "outlined"}
@@ -419,111 +408,64 @@ function App() {
 
               {!running && rows.length > 0 && (
                 <Stack spacing={2}>
-                  <Tabs value={tab} onChange={(_event, value) => setTab(value)} textColor="primary" indicatorColor="primary">
-                    <Tab label="By Questions" />
-                    <Tab label="By Compliance" />
-                  </Tabs>
+                  <Grid container spacing={1.5}>
+                    {Object.entries(summary).map(([key, count]) => (
+                      <Grid item xs={6} md={3} key={key}>
+                        <Card variant="outlined" sx={{ borderColor: "#d9e8f9" }}>
+                          <CardContent sx={{ py: 1.5 }}>
+                            <Typography variant="caption" color="text.secondary">{key.replaceAll("_", " ")}</Typography>
+                            <Typography
+                              variant="h5"
+                              sx={{ mt: 0.75, fontWeight: 800, color: "#0f172a" }}
+                            >
+                              {count}
+                            </Typography>
+                          </CardContent>
+                        </Card>
+                      </Grid>
+                    ))}
+                  </Grid>
 
-                  {tab === 1 && (
-                    <Grid container spacing={1.5}>
-                      {Object.entries(summary).map(([key, count]) => (
-                        <Grid item xs={6} md={3} key={key}>
-                          <Card variant="outlined" sx={{ borderColor: "#d9e8f9" }}>
-                            <CardContent sx={{ py: 1.5 }}>
-                              <Typography variant="caption" color="text.secondary">{key.replaceAll("_", " ")}</Typography>
-                              <Box mt={1}>{statusChip(key, `${count} item(s)`)} </Box>
-                            </CardContent>
-                          </Card>
-                        </Grid>
-                      ))}
-                    </Grid>
-                  )}
-
-                  {tab === 0 && (
-                    <TableContainer component={Paper} variant="outlined">
-                      <Table size="small">
-                        <TableHead>
-                          <TableRow>
-                            <TableCell>Question</TableCell>
-                            <TableCell>Control ID</TableCell>
-                            <TableCell>Control Name</TableCell>
-                            <TableCell>Control Component</TableCell>
-                            <TableCell>Status</TableCell>
-                            <TableCell>Result</TableCell>
-                            <TableCell>Repository</TableCell>
-                          </TableRow>
-                        </TableHead>
-                        <TableBody>
-                          {rows.map((item, index) => {
-                            const status = String(item?.status || "UNDETERMINED").toUpperCase();
-                            const reason = String(item?.fail_reason || item?.findings || item?.answer || "").trim();
-                            const resultText =
-                              item?.compliant === true
-                                ? "Compliant"
-                                : item?.compliant === false
-                                  ? "Not Compliant"
-                                  : status === "COMPLIANT"
-                                    ? "Compliant"
-                                    : status === "NON_COMPLIANT"
-                                      ? "Not Compliant"
-                                      : "Undetermined";
-                            return (
-                              <TableRow key={`${item?.repository || "repo"}-${item?.control || "ctrl"}-${index}`}>
-                                <TableCell>{String(item?.question || "-")}</TableCell>
-                                <TableCell>{String(item?.control || "-")}</TableCell>
-                                <TableCell>{String(item?.description || item?.control_name || "-")}</TableCell>
-                                <TableCell>{String(item?.component || item?.control_component || item?.evidence_source || "-")}</TableCell>
-                                <TableCell>{statusChip(status, reason)}</TableCell>
-                                <TableCell>{resultText}</TableCell>
-                                <TableCell>{String(item?.repository || result?.repository || "-")}</TableCell>
-                              </TableRow>
-                            );
-                          })}
-                        </TableBody>
-                      </Table>
-                    </TableContainer>
-                  )}
-
-                  {tab === 1 && (
-                    <TableContainer component={Paper} variant="outlined">
-                      <Table size="small">
-                        <TableHead>
-                          <TableRow>
-                            <TableCell>Control ID</TableCell>
-                            <TableCell>Control Name</TableCell>
-                            <TableCell>Status</TableCell>
-                            <TableCell>Result</TableCell>
-                            <TableCell>Repository</TableCell>
-                          </TableRow>
-                        </TableHead>
-                        <TableBody>
-                          {rows.map((item, index) => {
-                            const status = String(item?.status || "UNDETERMINED").toUpperCase();
-                            const reason = String(item?.fail_reason || item?.findings || item?.answer || "").trim();
-                            const resultText =
-                              item?.compliant === true
-                                ? "Compliant"
-                                : item?.compliant === false
-                                  ? "Not Compliant"
-                                  : status === "COMPLIANT"
-                                    ? "Compliant"
-                                    : status === "NON_COMPLIANT"
-                                      ? "Not Compliant"
-                                      : "Undetermined";
-                            return (
-                              <TableRow key={`${item?.repository || "repo"}-${item?.control || "ctrl"}-${index}-c`}>
-                                <TableCell>{String(item?.control || "-")}</TableCell>
-                                <TableCell>{String(item?.description || item?.control_name || "-")}</TableCell>
-                                <TableCell>{statusChip(status, reason)}</TableCell>
-                                <TableCell>{resultText}</TableCell>
-                                <TableCell>{String(item?.repository || result?.repository || "-")}</TableCell>
-                              </TableRow>
-                            );
-                          })}
-                        </TableBody>
-                      </Table>
-                    </TableContainer>
-                  )}
+                  <TableContainer component={Paper} variant="outlined">
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Control ID</TableCell>
+                          <TableCell>Control Name</TableCell>
+                          <TableCell>Status</TableCell>
+                          <TableCell>Result</TableCell>
+                          <TableCell>Reason</TableCell>
+                          <TableCell>Repository</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {rows.map((item, index) => {
+                          const status = String(item?.status || "UNDETERMINED").toUpperCase();
+                          const reason = getHumanReadableReason(item);
+                          const resultText =
+                            item?.passed === true
+                              ? "Pass"
+                              : item?.passed === false
+                                ? "Fail"
+                                : status === "PASS"
+                                  ? "Pass"
+                                  : status === "FAIL"
+                                    ? "Fail"
+                                    : "Undetermined";
+                          return (
+                            <TableRow key={`${item?.repository || "repo"}-${item?.control || "ctrl"}-${index}`}>
+                              <TableCell>{String(item?.control || "-")}</TableCell>
+                              <TableCell>{String(item?.description || item?.control_name || "-")}</TableCell>
+                              <TableCell>{statusChip(status)}</TableCell>
+                              <TableCell>{resultText}</TableCell>
+                              <TableCell>{reason}</TableCell>
+                              <TableCell>{String(item?.repository || result?.repository || "-")}</TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
                 </Stack>
               )}
 

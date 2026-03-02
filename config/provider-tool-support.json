@@ -15,7 +15,10 @@
         "list_issues",
         "list_branches",
         "list_pull_requests",
-        "list_commits"
+        "list_commits",
+        "get_pull_request_reviews",
+        "search_pull_requests",
+        "get_pull_request"
       ]
     },
     "gitlab": {

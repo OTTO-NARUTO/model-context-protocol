@@ -74,6 +74,27 @@
             "per_page": 100,
             "page": 1
           }
+        },
+        "get_pull_request_reviews": {
+          "method": "GET",
+          "path": "/repos/{owner}/{repo}/pulls/{pullNumber}/reviews",
+          "query": {
+            "per_page": 100,
+            "page": 1
+          }
+        },
+        "get_pull_request": {
+          "method": "GET",
+          "path": "/repos/{owner}/{repo}/pulls/{pullNumber}"
+        },
+        "search_pull_requests": {
+          "method": "GET",
+          "path": "/search/issues",
+          "query": {
+            "q": "repo:{owner}/{repo} is:pr is:merged",
+            "per_page": 100,
+            "page": 1
+          }
         }
       }
     },

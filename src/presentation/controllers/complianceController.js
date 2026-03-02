@@ -1,4 +1,4 @@
-import path from "path";
+﻿import path from "path";
 import { fileURLToPath } from "url";
 import { existsSync, readFileSync } from "fs";
 import { randomUUID } from "crypto";
@@ -12,89 +12,104 @@ const projectRoot = path.resolve(__dirname, "../../../");
 
 const evaluationEngine = new EvaluationEngine();
 const reportFormatter = new ReportFormatter();
+const ALLOWED_STANDARD = "ISO27001";
+const ALLOWED_CONTROLS = new Set(["8.9", "8.28"]);
 const controlLogicCatalog = buildControlLogicCatalog();
+const isoControlMappings = buildIsoControlMappings();
 
 function getMapping(standard) {
-  const fileName = String(standard ?? "").toLowerCase() === "iso27001"
-    ? "iso27001_mapping.json"
-    : "soc2_mapping.json";
-
-  const filePath = path.join(projectRoot, "question_mapping", fileName);
-  if (!existsSync(filePath)) {
-    throw new Error(`Mapping file not found at: ${filePath}`);
+  const normalizedStandard = String(standard ?? "").toUpperCase();
+  if (normalizedStandard !== ALLOWED_STANDARD) {
+    return [];
   }
-
-  return JSON.parse(readFileSync(filePath, "utf-8"));
+  return isoControlMappings;
 }
 
-function resolveToolName(mcpTool, provider) {
+function resolveToolNames(mcpTool, provider) {
+  if (Array.isArray(mcpTool)) {
+    return mcpTool.map((item) => String(item ?? "")).filter(Boolean);
+  }
   if (typeof mcpTool === "string") {
-    return mcpTool;
+    return [mcpTool];
   }
 
   if (mcpTool && typeof mcpTool === "object") {
     const value = mcpTool[String(provider ?? "").toLowerCase()];
-    return typeof value === "string" ? value : "";
+    if (Array.isArray(value)) {
+      return value.map((item) => String(item ?? "")).filter(Boolean);
+    }
+    return typeof value === "string" ? [value] : [];
   }
 
-  return "";
+  return [];
 }
 
 function getControlEntry(controlId) {
-  const allMappings = [...getMapping("iso27001"), ...getMapping("soc2")];
-  return allMappings.find((item) => String(item?.control_id ?? "") === String(controlId));
+  return getMapping(ALLOWED_STANDARD).find((item) => String(item?.control_id ?? "") === String(controlId));
 }
 
 function buildControlLogicCatalog() {
-  const fileSpecs = [
-    { standard: "ISO27001", file: "ISO27001_Repo_Controls.json" },
-    { standard: "SOC2", file: "SOC2_Repo_Controls.json" }
-  ];
-
-  const out = {};
-  for (const spec of fileSpecs) {
-    const filePath = path.join(projectRoot, "compliance", "mcp-tool-mapping", spec.file);
-    if (!existsSync(filePath)) {
-      continue;
-    }
-
-    let parsed = null;
-    try {
-      parsed = JSON.parse(readFileSync(filePath, "utf-8"));
-    } catch {
-      parsed = null;
-    }
-    const controls = Array.isArray(parsed?.controls) ? parsed.controls : [];
-    for (const control of controls) {
-      const controlCode = String(control?.control_code ?? "");
-      if (!controlCode) continue;
-      const mapping = Array.isArray(control?.mappings) ? control.mappings[0] : null;
-      const logic = mapping?.logic && typeof mapping.logic === "object" ? mapping.logic : null;
-      if (!logic) continue;
-      out[`${spec.standard}:${controlCode}`] = logic;
-    }
+  const filePath = path.join(projectRoot, "compliance", "mcp-tool-mapping", "ISO27001_Repo_Controls.json");
+  if (!existsSync(filePath)) {
+    return {};
   }
 
+  let parsed = null;
+  try {
+    parsed = JSON.parse(readFileSync(filePath, "utf-8"));
+  } catch {
+    parsed = null;
+  }
+
+  const controls = Array.isArray(parsed?.controls) ? parsed.controls : [];
+  const out = {};
+  for (const control of controls) {
+    const controlCode = String(control?.control_code ?? "");
+    if (!ALLOWED_CONTROLS.has(controlCode)) continue;
+    const mapping = Array.isArray(control?.mappings) ? control.mappings[0] : null;
+    const logic = mapping?.logic && typeof mapping.logic === "object" ? mapping.logic : null;
+    if (!logic) continue;
+    out[`${ALLOWED_STANDARD}:${controlCode}`] = logic;
+  }
+
+  return out;
+}
+
+function buildIsoControlMappings() {
+  const filePath = path.join(projectRoot, "compliance", "mcp-tool-mapping", "ISO27001_Repo_Controls.json");
+  if (!existsSync(filePath)) {
+    throw new Error(`Mapping file not found at: ${filePath}`);
+  }
+
+  let parsed = null;
+  try {
+    parsed = JSON.parse(readFileSync(filePath, "utf-8"));
+  } catch {
+    parsed = null;
+  }
+
+  const controls = Array.isArray(parsed?.controls) ? parsed.controls : [];
+  const out = [];
+  for (const control of controls) {
+    const controlId = String(control?.control_code ?? "");
+    if (!ALLOWED_CONTROLS.has(controlId)) continue;
+    const mapping = Array.isArray(control?.mappings) ? control.mappings[0] : null;
+    if (!mapping || typeof mapping !== "object") continue;
+    out.push({
+      control_id: controlId,
+      control_name: String(control?.control_name ?? ""),
+      evidence_source: String(mapping?.evidence_source ?? ""),
+      mcp_tool: mapping?.tools ?? {}
+    });
+  }
   return out;
 }
 
 function getControlLogic(controlId, standard) {
   const normalizedControl = String(controlId ?? "");
   const normalizedStandard = String(standard ?? "").toUpperCase();
-  const directKey = `${normalizedStandard}:${normalizedControl}`;
-  if (controlLogicCatalog[directKey]) {
-    return controlLogicCatalog[directKey];
-  }
-
-  // Fallback: look up by control id only if unique in catalog.
-  const matches = Object.entries(controlLogicCatalog)
-    .filter(([key]) => key.endsWith(`:${normalizedControl}`))
-    .map(([, value]) => value);
-
-  if (matches.length === 1) {
-    return matches[0];
-  }
-  return null;
+  const key = `${normalizedStandard}:${normalizedControl}`;
+  return controlLogicCatalog[key] ?? null;
 }
 
 function normalizeRepoNames(repoName, repoNames) {
@@ -126,30 +141,82 @@ function isRetryableToolError(message) {
   return /unknown tool|missing required parameter|required parameter/i.test(String(message ?? ""));
 }
 
-function buildToolCoverage(controlId, provider, evidencePayload) {
-  const isGithub518 =
-    String(controlId ?? "") === "5.18" &&
-    String(provider ?? "").toLowerCase() === "github";
-  if (!isGithub518) {
-    return null;
+function toPublicStatus(status) {
+  const normalized = String(status ?? "UNDETERMINED").toUpperCase();
+  if (normalized === "COMPLIANT") return "PASS";
+  if (normalized === "NON_COMPLIANT") return "FAIL";
+  return normalized;
+}
+
+function toPassed(status, value) {
+  if (value === true || value === false) return value;
+  if (status === "PASS") return true;
+  if (status === "FAIL") return false;
+  return null;
+}
+
+function replaceComplianceTerms(text) {
+  const source = String(text ?? "");
+  if (!source) return source;
+  return source
+    .replace(/non[- ]compliant/gi, "failed")
+    .replace(/\bcompliant\b/gi, "passed");
+}
+
+function buildFailureReason(status, verdict) {
+  if (String(status) !== "FAIL") {
+    return replaceComplianceTerms(verdict?.failReason ?? "");
   }
 
-  const diagnostics = evidencePayload?.diagnostics ?? {};
-  const requiredTools = Array.isArray(diagnostics?.requiredTools)
-    ? diagnostics.requiredTools.map((item) => String(item))
-    : ["list_collaborators", "get_repository"];
-  const availableTools = Array.isArray(diagnostics?.availableTools)
-    ? diagnostics.availableTools.map((item) => String(item))
-    : [];
-  const missingTools = Array.isArray(diagnostics?.missingRequiredTools)
-    ? diagnostics.missingRequiredTools.map((item) => String(item))
-    : requiredTools.filter((name) => !availableTools.includes(name));
+  const metadata = verdict?.metadata && typeof verdict.metadata === "object"
+    ? verdict.metadata
+    : {};
+  const strategy = String(metadata?.strategy ?? "").toLowerCase();
 
-  return {
-    required_tools: requiredTools,
-    available_tools: availableTools,
-    missing_tools: missingTools
-  };
+  if (strategy === "branch_protection") {
+    const totalChecked = Number(metadata?.totalChecked ?? 0);
+    const protectedCount = Number(metadata?.protectedCount ?? 0);
+    const failingBranches = Array.isArray(metadata?.failingItems)
+      ? metadata.failingItems
+      : Array.isArray(metadata?.unprotectedCriticalBranches)
+        ? metadata.unprotectedCriticalBranches
+        : [];
+    return `Checks run: branch protection on ${totalChecked} branch(es). Failed checks: ${failingBranches.length} unprotected branch(es) (${failingBranches.join(", ") || "unknown"}); protected detected=${protectedCount}.`;
+  }
+
+  if (strategy === "review_process") {
+    const totalChecked = Number(metadata?.totalChecked ?? 0);
+    const threshold = Number(metadata?.threshold ?? 1);
+    const failingItems = Array.isArray(metadata?.failingItems) ? metadata.failingItems : [];
+    return `Checks run: minimum approvals >= ${threshold} across ${totalChecked} merged change(s). Failed checks: ${failingItems.length} change(s) below threshold (${failingItems.join(", ") || "unknown"}).`;
+  }
+
+  if (strategy === "security_testing") {
+    const totalChecked = Number(metadata?.totalChecked ?? 0);
+    const failCount = Number(metadata?.failCount ?? 0);
+    const failedStatuses = Array.isArray(metadata?.failedStatuses) ? metadata.failedStatuses : [];
+    return `Checks run: CI/CD security statuses across ${totalChecked} record(s). Failed checks: ${failCount} failing/canceled status result(s) (${failedStatuses.join(", ") || "unknown"}).`;
+  }
+
+  if (strategy === "vulnerabilities") {
+    const violatingCount = Number(metadata?.violatingCount ?? metadata?.securityIssueCount ?? 0);
+    const samples = Array.isArray(metadata?.samples) ? metadata.samples : [];
+    return `Checks run: open high-severity vulnerability scan. Failed checks: ${violatingCount} violating alert(s) (${samples.join(", ") || "unknown"}).`;
+  }
+
+  if (strategy === "identity") {
+    const adminLikeCount = Number(metadata?.adminLikeCount ?? 0);
+    const maxAllowedAdminLike = Number(metadata?.maxAllowedAdminLike ?? 0);
+    const visibility = String(metadata?.repositoryVisibility ?? "unknown");
+    return `Checks run: role distribution and repository visibility. Failed checks: elevated roles=${adminLikeCount} (allowed <= ${maxAllowedAdminLike}), visibility=${visibility}.`;
+  }
+
+  return replaceComplianceTerms(verdict?.findings ?? verdict?.failReason ?? "");
+}
+
+function isGithubBranchProtectionPlanError(message) {
+  const text = String(message ?? "").toLowerCase();
+  return text.includes("upgrade to github pro") || text.includes("get-branch-protection");
 }
 
 export class ComplianceController {
@@ -167,6 +234,10 @@ export class ComplianceController {
         res.status(400).json({ error: "Invalid provider." });
         return;
       }
+      if (!ALLOWED_CONTROLS.has(String(controlId ?? ""))) {
+        res.status(400).json({ error: "Only ISO27001 controls 8.9, 8.28 are supported." });
+        return;
+      }
       if (!owner || !repo) {
         res.status(400).json({ error: "repoName must be in 'owner/repo' format" });
         return;
@@ -175,53 +246,53 @@ export class ComplianceController {
       const tenantId = req.tenantId;
       const plan = getControlEntry(controlId);
       if (!plan) {
-        res.status(404).json({ error: `Control ${controlId} not found in question_mapping files.` });
+        res.status(404).json({ error: `Control ${controlId} not found in ISO27001 mapping.` });
         return;
       }
 
-      const toolName = resolveToolName(plan.mcp_tool, provider);
-      if (!toolName) {
+      const toolNames = resolveToolNames(plan.mcp_tool, provider);
+      if (toolNames.length === 0) {
         res.status(400).json({ error: `No ${provider} tool mapped for control ${controlId}.` });
         return;
       }
 
       const token = await this.oauthService.getAccessToken(provider, tenantId);
-
       const collected = await this.collectEvidence({
-        controlId,
-        provider,
-        toolName,
+        toolNames,
         owner,
         repo,
+        controlId,
+        provider,
         token,
         preference: normalizePreference(executionPreference)
       });
+
       const evaluatedAt = new Date().toISOString();
       const evidencePayload = collected.evidencePayload;
       const verdict = evaluationEngine.evaluate(controlId, evidencePayload, {
         controlId,
         controlName: plan.control_name,
-        question: plan.question,
         evidenceSource: plan.evidence_source,
         toolName: collected.toolUsed,
         provider,
-        logic: getControlLogic(controlId)
+        logic: getControlLogic(controlId, ALLOWED_STANDARD)
       });
-      const toolCoverage = buildToolCoverage(controlId, provider, evidencePayload);
+      const status = toPublicStatus(verdict.status);
+      const passed = toPassed(status, verdict.passed);
+      const reason = buildFailureReason(status, verdict);
 
       res.json({
         control: controlId,
         evaluated_at: evaluatedAt,
         description: plan.control_name,
-        question: plan.question,
-        answer: verdict.answer,
-        compliant: verdict.compliant,
+        answer: replaceComplianceTerms(verdict.answer),
+        passed,
         evidence_source: plan.evidence_source,
         tool_used: collected.toolUsed,
-        status: verdict.status,
-        fail_reason: verdict.failReason,
+        status,
+        fail_reason: reason,
         evidence_snapshot: verdict.evidenceSnapshot,
-        findings: verdict.findings,
+        findings: replaceComplianceTerms(verdict.findings),
         metadata: verdict.metadata,
         evidence: evidencePayload,
         traceId: collected.traceId,
@@ -229,15 +300,13 @@ export class ComplianceController {
           repository: repoName,
           control: controlId,
           description: plan.control_name,
-          question: plan.question,
-          status: verdict.status,
-          compliant: verdict.compliant,
-          fail_reason: verdict.failReason,
+          status,
+          passed,
+          fail_reason: reason,
           evaluated_at: evaluatedAt,
           evidence_source: plan.evidence_source,
           tool_used: collected.toolUsed
-        }),
-        ...(toolCoverage ?? {})
+        })
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Evaluation failed.";
@@ -252,6 +321,10 @@ export class ComplianceController {
     const normalizedRepos = normalizeRepoNames(repoName, repoNames);
 
     try {
+      if (normalizedStandard !== ALLOWED_STANDARD) {
+        res.status(400).json({ error: "Only ISO27001 standard is supported." });
+        return;
+      }
       if (!isProvider(provider)) {
         res.status(400).json({ error: "Invalid provider." });
         return;
@@ -285,17 +358,17 @@ export class ComplianceController {
 
         for (const item of mappings) {
           try {
-            const toolName = resolveToolName(item.mcp_tool, provider);
-            if (!toolName) {
+            const toolNames = resolveToolNames(item.mcp_tool, provider);
+            if (toolNames.length === 0) {
               throw new Error(`No ${provider} tool mapped for control ${item.control_id}.`);
             }
 
             const collected = await this.collectEvidence({
-              controlId: item.control_id,
-              provider,
-              toolName,
+              toolNames,
               owner,
               repo,
+              controlId: item.control_id,
+              provider,
               token,
               preference: normalizePreference(executionPreference)
             });
@@ -303,31 +376,30 @@ export class ComplianceController {
             const verdict = evaluationEngine.evaluate(item.control_id, evidencePayload, {
               controlId: item.control_id,
               controlName: item.control_name,
-              question: item.question,
               evidenceSource: item.evidence_source,
               toolName: collected.toolUsed,
               provider,
               logic: getControlLogic(item.control_id, normalizedStandard)
             });
-            const toolCoverage = buildToolCoverage(item.control_id, provider, evidencePayload);
+            const status = toPublicStatus(verdict.status);
+            const passed = toPassed(status, verdict.passed);
+            const reason = buildFailureReason(status, verdict);
 
             results.push({
               repository: fullRepoName,
               evaluated_at: new Date().toISOString(),
               control: item.control_id,
               description: item.control_name,
-              question: item.question,
-              answer: verdict.answer,
-              compliant: verdict.compliant,
+              answer: replaceComplianceTerms(verdict.answer),
+              passed,
               evidence_source: item.evidence_source,
               tool_used: collected.toolUsed,
-              status: verdict.status,
-              fail_reason: verdict.failReason,
+              status,
+              fail_reason: reason,
               evidence_snapshot: verdict.evidenceSnapshot,
-              findings: verdict.findings,
+              findings: replaceComplianceTerms(verdict.findings),
               metadata: verdict.metadata,
-              traceId: collected.traceId ?? randomUUID(),
-              ...(toolCoverage ?? {})
+              traceId: collected.traceId ?? randomUUID()
             });
           } catch (error) {
             const message = error instanceof Error ? error.message : "Evaluation failed.";
@@ -336,11 +408,10 @@ export class ComplianceController {
               evaluated_at: new Date().toISOString(),
               control: item.control_id,
               description: item.control_name,
-              question: item.question,
               answer: "Unable to determine due to evaluation error.",
-              compliant: null,
+              passed: null,
               evidence_source: item.evidence_source,
-              tool_used: resolveToolName(item.mcp_tool, provider),
+              tool_used: resolveToolNames(item.mcp_tool, provider).join("+"),
               status: "ERROR",
               fail_reason: message,
               findings: message,
@@ -359,8 +430,8 @@ export class ComplianceController {
         summary: {
           repositories: normalizedRepos.length,
           total: results.length,
-          compliant: results.filter((item) => item.status === "COMPLIANT").length,
-          non_compliant: results.filter((item) => item.status === "NON_COMPLIANT").length,
+          pass: results.filter((item) => item.status === "PASS").length,
+          fail: results.filter((item) => item.status === "FAIL").length,
           errors: results.filter((item) => item.status === "ERROR").length
         },
         results,
@@ -393,149 +464,108 @@ export class ComplianceController {
     }
   };
 
-  collectEvidence = async ({ controlId, provider, toolName, owner, repo, token, preference = "prefer_mcp" }) => {
-    const normalizedProvider = String(provider ?? "").toLowerCase();
+  collectEvidence = async ({ toolNames, owner, repo, controlId, provider, token, preference = "prefer_mcp" }) => {
     const normalizedControlId = String(controlId ?? "");
-    const args = { owner, repo };
+    const normalizedProvider = String(provider ?? "").toLowerCase();
+    if (
+      normalizedProvider === "github" &&
+      normalizedControlId === "8.28" &&
+      Array.isArray(toolNames) &&
+      toolNames.includes("list_pull_requests")
+    ) {
+      return this.collectCodeReviewEvidence({ provider, owner, repo, token, preference });
+    }
 
-    if (normalizedProvider === "github" && normalizedControlId === "5.18") {
-      const available = await this.safeListToolNames(provider, token);
-      const requiredTools = ["list_collaborators", "get_repository"];
-      const availableSet = new Set(available);
-      const missingRequiredTools = requiredTools.filter((name) => !availableSet.has(name));
+    if (
+      normalizedProvider === "github" &&
+      normalizedControlId === "8.9" &&
+      Array.isArray(toolNames) &&
+      toolNames.includes("get_branch_protection")
+    ) {
+      // Repo metadata is optional for diagnostics; branch protection evidence is the primary signal.
+      let repositoryEvidence = null;
+      if (toolNames.includes("get_repository")) {
+        try {
+          repositoryEvidence = await this.toolExecutionStrategy.executeTool({
+            provider,
+            toolName: "get_repository",
+            params: { owner, repo },
+            token,
+            preference
+          });
+        } catch {
+          repositoryEvidence = null;
+        }
+      }
 
-      if (missingRequiredTools.length > 0) {
+      try {
+        const protectionEvidence = await this.toolExecutionStrategy.executeTool({
+          provider,
+          toolName: "get_branch_protection",
+          params: { owner, repo, branch: "main" },
+          token,
+          preference
+        });
+        const protectionPayload = extractEvidencePayload(protectionEvidence);
+        const normalizedProtectionPayload = {
+          ...(protectionPayload && typeof protectionPayload === "object" ? protectionPayload : {}),
+          name: String(protectionPayload?.name ?? "main"),
+          branch: String(protectionPayload?.branch ?? "main"),
+          branch_protection_enabled: true
+        };
         return {
-          toolUsed: "",
-          traceId: randomUUID(),
-          evidencePayload: {
-            membership: [],
-            repository: null,
-            diagnostics: {
-              requiredTools,
-              availableTools: available,
-              missingRequiredTools,
-              availableToolsDetected: available.length > 0,
-              policy: "GitHub 5.18 requires list_collaborators and get_repository for accurate evaluation."
-            }
-          }
+          toolUsed: repositoryEvidence ? "get_repository+get_branch_protection" : "get_branch_protection",
+          traceId: protectionEvidence?.traceId ?? repositoryEvidence?.traceId ?? randomUUID(),
+          evidencePayload: normalizedProtectionPayload
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error ?? "");
+        if (!isGithubBranchProtectionPlanError(message)) {
+          throw error;
+        }
+
+        // GitHub may block branch-protection API on some plans/private repos; fall back to list_branches.
+        const branchesEvidence = await this.toolExecutionStrategy.executeTool({
+          provider,
+          toolName: "list_branches",
+          params: { owner, repo },
+          token,
+          preference
+        });
+
+        return {
+          toolUsed: repositoryEvidence
+            ? "get_repository+list_branches(fallback)"
+            : "list_branches(fallback)",
+          traceId: branchesEvidence?.traceId ?? repositoryEvidence?.traceId ?? randomUUID(),
+          evidencePayload: extractEvidencePayload(branchesEvidence)
         };
       }
+    }
 
-      const collaboratorEvidence = await this.toolExecutionStrategy.executeTool({
+    const args = { owner, repo };
+    const names = Array.isArray(toolNames) ? toolNames : [];
+    const results = [];
+    for (const name of names) {
+      const evidence = await this.toolExecutionStrategy.executeTool({
         provider,
-        toolName: "list_collaborators",
+        toolName: name,
         params: args,
         token,
         preference
       });
-      const repositoryEvidence = await this.toolExecutionStrategy.executeTool({
-        provider,
-        toolName: "get_repository",
-        params: args,
-        token,
-        preference
-      });
-
-      const repositoryPayload = extractEvidencePayload(repositoryEvidence);
-      const collaboratorPayload = extractEvidencePayload(collaboratorEvidence);
-      const traceId = collaboratorEvidence?.traceId ?? repositoryEvidence?.traceId ?? randomUUID();
-      return {
-        toolUsed: "list_collaborators+get_repository",
-        traceId,
-        evidencePayload: {
-          membership: collaboratorPayload,
-          repository: repositoryPayload
-        }
-      };
+      results.push({ name, evidence });
     }
 
-    if (normalizedProvider === "github" && normalizedControlId === "8.28") {
-      return this.collectCodeReviewEvidence({
-        provider,
-        owner,
-        repo,
-        token,
-        preference
-      });
-    }
-
-    const evidence = await this.toolExecutionStrategy.executeTool({
-      provider,
-      toolName,
-      params: args,
-      token,
-      preference
-    });
-    return {
-      toolUsed: toolName,
-      traceId: evidence?.traceId ?? randomUUID(),
-      evidencePayload: extractEvidencePayload(evidence)
-    };
-  };
-
-  safeListToolNames = async (provider, token) => {
-    try {
-      const tools = await this.toolExecutionStrategy.listTools(provider, token);
-      return tools
-        .filter((item) => String(item?.selected_mode ?? "") !== "none")
-        .map((item) => String(item?.name ?? ""))
-        .filter(Boolean);
-    } catch {
-      return [];
-    }
-  };
-
-  filterSupportedTools = (candidates, availableNames) => {
-    const deduped = [...new Set(candidates.filter(Boolean))];
-    if (!Array.isArray(availableNames) || availableNames.length === 0) {
-      return deduped;
-    }
-    const availableSet = new Set(availableNames);
-    return deduped.filter((name) => availableSet.has(name));
-  };
-
-  callToolCandidates = async (provider, tools, paramVariants, token, options = {}) => {
-    const candidateTools = Array.isArray(tools) ? tools.filter(Boolean) : [];
-    const variants = Array.isArray(paramVariants) ? paramVariants : [{}];
-    const allowFailure = Boolean(options?.allowFailure);
-    let lastErrorMessage = "";
-
-    for (const tool of candidateTools) {
-      for (const params of variants) {
-        try {
-          const evidence = await this.toolExecutionStrategy.executeTool({
-            provider,
-            toolName: tool,
-            params,
-            token
-          });
-          return { toolUsed: tool, evidence, error: null };
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error ?? "");
-          lastErrorMessage = message;
-          if (!isRetryableToolError(message)) {
-            if (allowFailure) {
-              return { toolUsed: "", evidence: null, error: message };
-            }
-            throw error;
-          }
-        }
-      }
-    }
-
-    if (allowFailure) {
-      return {
-        toolUsed: "",
-        evidence: null,
-        error: lastErrorMessage || `No compatible tool found. Tried: ${candidateTools.join(", ")}`
-      };
+    const primary = results[0];
+    if (!primary) {
+      throw new Error(`No tools executed for control ${normalizedControlId}.`);
     }
 
     return {
-      toolUsed: "",
-      evidence: null,
-      error: lastErrorMessage || "No compatible membership tool found.",
+      toolUsed: results.map((item) => item.name).join("+"),
+      traceId: primary.evidence?.traceId ?? randomUUID(),
+      evidencePayload: extractEvidencePayload(primary.evidence)
     };
   };
 
@@ -558,10 +588,14 @@ export class ComplianceController {
     }
 
     const mergedPrItems = this.extractPullRequests(mergedEvidence.payload);
-    const mergedPrNumbers = mergedPrItems
-      .filter((pr) => this.isMergedPullRequest(pr))
-      .map((pr) => this.extractPullNumber(pr))
-      .filter((value) => Number.isFinite(value));
+    const mergedPrNumbers = mergedEvidence.toolUsed === "search_pull_requests"
+      ? mergedPrItems
+        .map((pr) => this.extractPullNumber(pr))
+        .filter((value) => Number.isFinite(value))
+      : mergedPrItems
+        .filter((pr) => this.isMergedPullRequest(pr))
+        .map((pr) => this.extractPullNumber(pr))
+        .filter((value) => Number.isFinite(value));
 
     const dedupedPullNumbers = [...new Set(mergedPrNumbers)];
     const pullRequests = [];
@@ -611,7 +645,6 @@ export class ComplianceController {
   tryToolCandidates = async (provider, candidates, token, preference) => {
     for (const candidate of candidates) {
       try {
-        console.log(`[8.28] tool_used=${candidate.toolName}`);
         const evidence = await this.toolExecutionStrategy.executeTool({
           provider,
           toolName: candidate.toolName,
@@ -624,23 +657,20 @@ export class ComplianceController {
           traceId: evidence?.traceId ?? randomUUID(),
           payload: extractEvidencePayload(evidence)
         };
-      } catch {
-        continue;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error ?? "");
+        if (!isRetryableToolError(message)) {
+          continue;
+        }
       }
     }
     return null;
   };
 
   extractPullRequests = (payload) => {
-    if (Array.isArray(payload)) {
-      return payload;
-    }
-    if (Array.isArray(payload?.items)) {
-      return payload.items;
-    }
-    if (Array.isArray(payload?.data)) {
-      return payload.data;
-    }
+    if (Array.isArray(payload)) return payload;
+    if (Array.isArray(payload?.items)) return payload.items;
+    if (Array.isArray(payload?.data)) return payload.data;
     return [];
   };
 
@@ -656,18 +686,10 @@ export class ComplianceController {
   };
 
   extractReviewItems = (payload) => {
-    if (Array.isArray(payload)) {
-      return payload;
-    }
-    if (Array.isArray(payload?.items)) {
-      return payload.items;
-    }
-    if (Array.isArray(payload?.data)) {
-      return payload.data;
-    }
-    if (Array.isArray(payload?.reviews)) {
-      return payload.reviews;
-    }
+    if (Array.isArray(payload)) return payload;
+    if (Array.isArray(payload?.items)) return payload.items;
+    if (Array.isArray(payload?.data)) return payload.data;
+    if (Array.isArray(payload?.reviews)) return payload.reviews;
     return [];
   };
 }

@@ -212,10 +212,10 @@ export default class EvaluationEngine {
 
     if (hasCompositeShape && Number(normalized?.merged_pr_count ?? 0) === 0) {
       const policy = String(normalized?.zero_merged_policy ?? "UNDETERMINED").toUpperCase();
-      const compliantWhenZero = policy === "COMPLIANT";
+      const passedWhenZero = policy === "COMPLIANT";
       return {
-        status: compliantWhenZero ? "COMPLIANT" : "UNDETERMINED",
-        answer: compliantWhenZero
+        status: passedWhenZero ? "COMPLIANT" : "UNDETERMINED",
+        answer: passedWhenZero
           ? "Yes. No merged pull requests were found, so review requirement is considered satisfied by policy."
           : "Unable to determine because no merged pull requests were found.",
         findings: `Zero merged pull requests detected. Applied zero_merged_policy=${policy}.`,
@@ -353,7 +353,7 @@ export default class EvaluationEngine {
     };
   }
 
-  // JUDGE: 8.28 Secure Coding
+  // Strategy: Review Process
   evaluateSecureCoding(data, context = {}) {
     const prs = this._asArray(data);
     if (prs.length === 0) return this.defaultEvaluation(context);
@@ -401,7 +401,7 @@ export default class EvaluationEngine {
     };
   }
 
-  // JUDGE: 5.18 Repository Access
+  // Strategy: Identity and Access
   evaluateRepositoryAccessRights(data, context = {}) {
     const { members, repository, visibility, diagnostics } = this._extractIdentityEvidence(data);
     const provider = String(context?.provider ?? "").toLowerCase();
@@ -490,7 +490,7 @@ export default class EvaluationEngine {
         : "No. Access evidence indicates either broad elevated privileges or disallowed repository exposure.",
       findings: pass
         ? `Analyzed ${members.length} member(s): ${adminLikeCount} elevated role(s), ${unknownCount} unknown role(s). Repository visibility: ${visibility.label}.`
-        : `Non-compliant because ${failureReasons.join(" and ")}.`,
+        : `Failed because ${failureReasons.join(" and ")}.`,
       metadata: {
         strategy: "identity",
         controlId: controlIdFrom(context),
@@ -695,10 +695,24 @@ export default class EvaluationEngine {
     const boolFlags = [
       branch?.protected,
       branch?.is_protected,
+      branch?.branch_protection_enabled,
       branch?.protection?.enabled,
       branch?.required_status_checks?.strict
     ];
     if (boolFlags.some(Boolean)) return true;
+
+    // GitHub get_branch_protection endpoint returns protection config without "protected=true".
+    if (
+      branch?.required_pull_request_reviews ||
+      branch?.enforce_admins ||
+      branch?.required_status_checks ||
+      branch?.required_linear_history ||
+      branch?.required_signatures ||
+      branch?.allow_force_pushes === false ||
+      branch?.allow_deletions === false
+    ) {
+      return true;
+    }
 
     const restrictions = this._asArray(branch?.restrictions ?? branch?.branch_restrictions ?? branch?.rules);
     return restrictions.length > 0;
@@ -911,7 +925,7 @@ export default class EvaluationEngine {
 
   _withComplianceFlag(verdict, payload = null, context = {}) {
     const status = String(verdict?.status ?? "").toUpperCase();
-    const compliant = status === "COMPLIANT"
+    const passed = status === "COMPLIANT"
       ? true
       : status === "NON_COMPLIANT"
         ? false
@@ -921,15 +935,16 @@ export default class EvaluationEngine {
     const dynamicNarrative = this._buildDynamicNarrative(status, verdict?.metadata ?? {}, context);
     const answer = dynamicNarrative.answer || baseAnswer;
     const findings = dynamicNarrative.findings || baseFindings;
-    const failReason = compliant === true
+    const failReason = passed === true
       ? ""
-      : (findings || "Evaluation could not confirm compliance from the available evidence.");
+      : (findings || "Evaluation could not confirm a pass result from the available evidence.");
     const evidenceSnapshot = this._sanitizeSnapshot(this._buildEvidenceSnapshot(payload, verdict?.metadata ?? {}));
     return {
       ...verdict,
       answer,
       findings,
-      compliant,
+      passed,
+      compliant: passed,
       failReason,
       evidenceSnapshot
     };
@@ -951,15 +966,15 @@ export default class EvaluationEngine {
 
     if (status === "COMPLIANT") {
       return {
-        answer: `${descriptor}${providerText} is compliant.${metricSummary ? ` ${metricSummary}.` : ""}${questionText}`,
-        findings: `${descriptor} passed with status COMPLIANT.${metricSummary ? ` ${metricSummary}.` : ""}${evidenceText}`
+        answer: `${descriptor}${providerText} passed.${metricSummary ? ` ${metricSummary}.` : ""}${questionText}`,
+        findings: `${descriptor} passed with status PASS.${metricSummary ? ` ${metricSummary}.` : ""}${evidenceText}`
       };
     }
 
     if (status === "NON_COMPLIANT") {
       return {
-        answer: `${descriptor}${providerText} is non-compliant.${metricSummary ? ` ${metricSummary}.` : ""}${questionText}`,
-        findings: `${descriptor} failed with status NON_COMPLIANT.${metricSummary ? ` ${metricSummary}.` : ""}${evidenceText}`
+        answer: `${descriptor}${providerText} failed.${metricSummary ? ` ${metricSummary}.` : ""}${questionText}`,
+        findings: `${descriptor} failed with status FAIL.${metricSummary ? ` ${metricSummary}.` : ""}${evidenceText}`
       };
     }
 
