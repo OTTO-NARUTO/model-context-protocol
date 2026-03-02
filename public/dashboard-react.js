@@ -10,17 +10,13 @@ const {
   CircularProgress,
   Container,
   CssBaseline,
-  FormControl,
   Grid,
-  InputLabel,
+  List,
+  ListItem,
   ListItemText,
-  MenuItem,
   Paper,
-  Select,
   Stack,
   Snackbar,
-  Tab,
-  Tabs,
   Table,
   TableBody,
   TableCell,
@@ -36,8 +32,7 @@ const {
 const provider = window.location.pathname.split("/").filter(Boolean).pop();
 const AUTO_LOGOUT_MS = 30 * 60 * 1000;
 const complianceStandardMap = {
-  iso27001: "ISO27001",
-  soc2: "SOC2"
+  iso27001: "ISO27001"
 };
 
 const theme = createTheme({
@@ -59,8 +54,8 @@ const theme = createTheme({
 function statusChip(status, detailText) {
   const normalized = String(status || "UNDETERMINED").toUpperCase();
   const colorMap = {
-    COMPLIANT: "success",
-    NON_COMPLIANT: "error",
+    PASS: "success",
+    FAIL: "error",
     ERROR: "error",
     UNDETERMINED: "default"
   };
@@ -74,6 +69,17 @@ function statusChip(status, detailText) {
     />
   );
   return detailText ? <Tooltip title={detailText}><Box component="span">{chip}</Box></Tooltip> : chip;
+}
+
+function getHumanReadableReason(item) {
+  const text = String(item?.fail_reason || item?.findings || item?.answer || "").trim();
+  if (text) return text;
+
+  const status = String(item?.status || "UNDETERMINED").toUpperCase();
+  if (status === "PASS") return "Control passed based on the available repository evidence.";
+  if (status === "FAIL") return "Control failed based on the available repository evidence.";
+  if (status === "ERROR") return "Evaluation failed due to a tool or processing error.";
+  return "Insufficient or unclear evidence to determine compliance.";
 }
 
 function NotificationToast({ message, severity = "info" }) {
@@ -142,15 +148,11 @@ function App() {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState(null);
-  const [tab, setTab] = useState(0);
   const [snackbar, setSnackbar] = useState({ open: false, message: "", severity: "info" });
-
-  const hasRepo = selectedRepos.length > 0;
-  const statusText = connected ? "Connected" : "Disconnected";
 
   const summary = useMemo(() => {
     const rows = Array.isArray(result?.results) ? result.results : [];
-    const out = { COMPLIANT: 0, NON_COMPLIANT: 0, ERROR: 0, UNDETERMINED: 0 };
+    const out = { PASS: 0, FAIL: 0, ERROR: 0, UNDETERMINED: 0 };
     for (const row of rows) {
       const key = String(row?.status || "UNDETERMINED").toUpperCase();
       out[key] = Number(out[key] || 0) + 1;
@@ -231,7 +233,7 @@ function App() {
   async function runCompliance() {
     setError("");
     setResult(null);
-    if (!hasRepo) {
+    if (selectedRepos.length === 0) {
       setError("Select at least one repository first.");
       return;
     }
@@ -258,7 +260,6 @@ function App() {
         })
       });
       setResult(body);
-      setTab(0);
     } catch (runError) {
       setError(String(runError));
     } finally {
@@ -267,106 +268,131 @@ function App() {
   }
 
   const rows = Array.isArray(result?.results) ? result.results : [];
+  const selectedCount = selectedRepos.length;
+
+  function repositoryHelperText(name) {
+    const lowered = String(name || "").toLowerCase();
+    if (lowered.includes("frontend")) return "Main frontend application";
+    if (lowered.includes("backend")) return "REST API service";
+    if (lowered.includes("mobile")) return "Mobile application";
+    if (lowered.includes("infra")) return "Infrastructure as code";
+    if (lowered.includes("doc")) return "Project documentation";
+    return "Repository";
+  }
 
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <Container maxWidth="lg" sx={{ py: 4 }}>
+      <Container maxWidth="lg" sx={{ py: 3 }}>
         <Stack spacing={2.5}>
-          <Paper elevation={0} sx={{ p: 3, border: "1px solid #d9e8f9" }}>
-            <Typography variant="h4" sx={{ color: "#0068D1", fontWeight: 800 }}>
-              {provider} Dashboard
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              OAuth connection and compliance evaluation.
-            </Typography>
-          </Paper>
+          <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
+            <Stack spacing={0.2}>
+              <Typography variant="h4" sx={{ color: "#0f172a", fontWeight: 800 }}>
+                Dashboard
+              </Typography>
+              <Typography variant="body2" sx={{ color: "#64748b" }}>
+                Manage your compliance scanning
+              </Typography>
+            </Stack>
+            <Button variant="outlined" onClick={handleDisconnect} sx={{ borderColor: "#d0d7e2", color: "#111827", minWidth: 112 }}>
+              Disconnect
+            </Button>
+          </Stack>
 
-          <Paper elevation={0} sx={{ p: 3, border: "1px solid #d9e8f9" }}>
-            <Stack direction={{ xs: "column", sm: "row" }} spacing={2} justifyContent="space-between" alignItems={{ xs: "flex-start", sm: "center" }}>
-              <Stack spacing={1}>
-                <Typography variant="h6">Connection</Typography>
-                <Chip
-                  label={statusText}
-                  color={connected ? "success" : "error"}
-                  size="small"
-                  sx={{ fontWeight: 700, width: "fit-content" }}
-                />
+          <Paper elevation={0} sx={{ p: 2.25, border: "1px solid #d8dee8", borderRadius: 2.5 }}>
+            <Stack direction="row" spacing={1.5} alignItems="center">
+              <Box sx={{ width: 20, height: 20, color: connected ? "#22c55e" : "#ef4444" }}>
+                <svg stroke="currentColor" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </Box>
+              <Stack spacing={0.2}>
+                <Typography sx={{ fontWeight: 700, color: "#111827" }}>
+                  {connected ? `Connected to ${provider.charAt(0).toUpperCase()}${provider.slice(1)}` : `Disconnected from ${provider}`}
+                </Typography>
+                <Typography variant="body2" sx={{ color: "#64748b" }}>
+                  {connected ? "Connection active and ready" : "Please connect to continue"}
+                </Typography>
               </Stack>
-              <Button variant="outlined" onClick={handleDisconnect} sx={{ borderColor: "#0068D1", color: "#0068D1" }}>
-                Logout
-              </Button>
             </Stack>
           </Paper>
 
-          <Paper elevation={0} sx={{ p: 3, border: "1px solid #d9e8f9" }}>
-            <Typography variant="h6" sx={{ mb: 2 }}>Repository</Typography>
-            <Grid container spacing={2}>
-              <Grid item xs={12} md={8}>
-                <FormControl fullWidth>
-                  <InputLabel id="repo-select-label">Repo Selector</InputLabel>
-                  <Select
-                    labelId="repo-select-label"
-                    multiple
-                    value={selectedRepos}
-                    onChange={(event) => {
-                      const value = event.target.value;
-                      setSelectedRepos(typeof value === "string" ? value.split(",") : value);
-                    }}
-                    renderValue={(selected) => selected.length === 0 ? "Select repositories" : `${selected.length} selected`}
-                    label="Repo Selector"
-                    disabled={loadingRepos}
-                  >
-                    {availableRepos.map((name) => (
-                      <MenuItem key={name} value={name}>
-                        <Checkbox checked={selectedRepos.indexOf(name) > -1} />
-                        <ListItemText primary={name} />
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              </Grid>
-              <Grid item xs={12} md={4}>
-                <Stack direction="row" spacing={1}>
-                  <Button variant="outlined" onClick={() => setSelectedRepos(availableRepos)} disabled={availableRepos.length === 0}>
-                    Select all
-                  </Button>
-                  <Button variant="outlined" onClick={() => setSelectedRepos([])} disabled={selectedRepos.length === 0}>
-                    Clear
-                  </Button>
-                </Stack>
+          <Paper elevation={0} sx={{ p: 2.5, border: "1px solid #d8dee8", borderRadius: 2.5 }}>
+            <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+              <Typography variant="h6" sx={{ color: "#111827", fontWeight: 700 }}>Select Repositories</Typography>
+              <Stack direction="row" spacing={1}>
+                <Button size="small" variant="outlined" onClick={() => setSelectedRepos(availableRepos)} disabled={availableRepos.length === 0}>Select All</Button>
+                <Button size="small" variant="outlined" onClick={() => setSelectedRepos([])} disabled={selectedRepos.length === 0}>Clear</Button>
+              </Stack>
+            </Stack>
+
+            {loadingRepos ? (
+              <Stack direction="row" spacing={1} alignItems="center" sx={{ py: 2 }}>
+                <CircularProgress size={18} sx={{ color: "#0068D1" }} />
+                <Typography variant="body2">Loading repositories...</Typography>
+              </Stack>
+            ) : (
+              <List disablePadding>
+                {availableRepos.map((name) => {
+                  const checked = selectedRepos.includes(name);
+                  return (
+                    <ListItem key={name} disableGutters sx={{ py: 1.15 }}>
+                      <Checkbox
+                        checked={checked}
+                        onChange={() => {
+                          setSelectedRepos((prev) => (
+                            prev.includes(name) ? prev.filter((item) => item !== name) : [...prev, name]
+                          ));
+                        }}
+                        sx={{ mr: 1 }}
+                      />
+                      <ListItemText
+                        primary={<Typography sx={{ fontWeight: 700, color: "#0f172a" }}>{name}</Typography>}
+                        secondary={<Typography variant="body2" sx={{ color: "#64748b" }}>{repositoryHelperText(name)}</Typography>}
+                      />
+                    </ListItem>
+                  );
+                })}
+              </List>
+            )}
+            <Typography variant="body2" sx={{ color: "#64748b", mt: 0.5 }}>
+              {selectedCount} of {availableRepos.length} repositories selected
+            </Typography>
+          </Paper>
+
+          <Paper elevation={0} sx={{ p: 2.5, border: "1px solid #d8dee8", borderRadius: 2.5 }}>
+            <Typography variant="h6" sx={{ color: "#111827", fontWeight: 700, mb: 2 }}>Select Compliance Standard</Typography>
+            <Grid container spacing={1.5}>
+              <Grid item xs={12} md={12}>
+                <Button
+                  fullWidth
+                  variant={selectedCompliance === "iso27001" ? "contained" : "outlined"}
+                  onClick={() => setSelectedCompliance("iso27001")}
+                  sx={{
+                    justifyContent: "flex-start",
+                    py: 1.2,
+                    color: selectedCompliance === "iso27001" ? "#fff" : "#0f172a",
+                    bgcolor: selectedCompliance === "iso27001" ? "#0068D1" : "#fff",
+                    borderColor: "#d0d7e2",
+                    "&:hover": { bgcolor: selectedCompliance === "iso27001" ? "#0058b3" : "#f8fbff" }
+                  }}
+                >
+                  ISO 27001
+                </Button>
               </Grid>
             </Grid>
           </Paper>
 
-          {hasRepo && (
-            <Paper elevation={0} sx={{ p: 3, border: "1px solid #d9e8f9" }}>
-              <Typography variant="h6" sx={{ mb: 2 }}>Compliance</Typography>
-              <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
-                <FormControl sx={{ minWidth: 220 }}>
-                  <InputLabel id="compliance-label">Compliance</InputLabel>
-                  <Select
-                    labelId="compliance-label"
-                    label="Compliance"
-                    value={selectedCompliance}
-                    onChange={(event) => setSelectedCompliance(event.target.value)}
-                  >
-                    <MenuItem value="">Select compliance</MenuItem>
-                    <MenuItem value="iso27001">ISO 27001</MenuItem>
-                    <MenuItem value="soc2">SOC 2</MenuItem>
-                  </Select>
-                </FormControl>
-                <Button
-                  variant="contained"
-                  onClick={runCompliance}
-                  disabled={running}
-                  sx={{ bgcolor: "#0068D1", "&:hover": { bgcolor: "#0058b3" } }}
-                >
-                  {running ? "Running..." : "Run Compliance Test"}
-                </Button>
-              </Stack>
-            </Paper>
-          )}
+          <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
+            <Button
+              variant="contained"
+              onClick={runCompliance}
+              disabled={running || selectedRepos.length === 0 || !selectedCompliance}
+              sx={{ bgcolor: "#0068D1", px: 3, py: 1.1, borderRadius: 1.5, "&:hover": { bgcolor: "#0058b3" } }}
+            >
+              {running ? "Running..." : "Run Compliance Check"}
+            </Button>
+          </Box>
 
           {error && <Alert severity="error">{error}</Alert>}
 
@@ -382,111 +408,64 @@ function App() {
 
               {!running && rows.length > 0 && (
                 <Stack spacing={2}>
-                  <Tabs value={tab} onChange={(_event, value) => setTab(value)} textColor="primary" indicatorColor="primary">
-                    <Tab label="By Questions" />
-                    <Tab label="By Compliance" />
-                  </Tabs>
+                  <Grid container spacing={1.5}>
+                    {Object.entries(summary).map(([key, count]) => (
+                      <Grid item xs={6} md={3} key={key}>
+                        <Card variant="outlined" sx={{ borderColor: "#d9e8f9" }}>
+                          <CardContent sx={{ py: 1.5 }}>
+                            <Typography variant="caption" color="text.secondary">{key.replaceAll("_", " ")}</Typography>
+                            <Typography
+                              variant="h5"
+                              sx={{ mt: 0.75, fontWeight: 800, color: "#0f172a" }}
+                            >
+                              {count}
+                            </Typography>
+                          </CardContent>
+                        </Card>
+                      </Grid>
+                    ))}
+                  </Grid>
 
-                  {tab === 1 && (
-                    <Grid container spacing={1.5}>
-                      {Object.entries(summary).map(([key, count]) => (
-                        <Grid item xs={6} md={3} key={key}>
-                          <Card variant="outlined" sx={{ borderColor: "#d9e8f9" }}>
-                            <CardContent sx={{ py: 1.5 }}>
-                              <Typography variant="caption" color="text.secondary">{key.replaceAll("_", " ")}</Typography>
-                              <Box mt={1}>{statusChip(key, `${count} item(s)`)} </Box>
-                            </CardContent>
-                          </Card>
-                        </Grid>
-                      ))}
-                    </Grid>
-                  )}
-
-                  {tab === 0 && (
-                    <TableContainer component={Paper} variant="outlined">
-                      <Table size="small">
-                        <TableHead>
-                          <TableRow>
-                            <TableCell>Question</TableCell>
-                            <TableCell>Control ID</TableCell>
-                            <TableCell>Control Name</TableCell>
-                            <TableCell>Control Component</TableCell>
-                            <TableCell>Status</TableCell>
-                            <TableCell>Result</TableCell>
-                            <TableCell>Repository</TableCell>
-                          </TableRow>
-                        </TableHead>
-                        <TableBody>
-                          {rows.map((item, index) => {
-                            const status = String(item?.status || "UNDETERMINED").toUpperCase();
-                            const reason = String(item?.fail_reason || item?.findings || item?.answer || "").trim();
-                            const resultText =
-                              item?.compliant === true
-                                ? "Compliant"
-                                : item?.compliant === false
-                                  ? "Not Compliant"
-                                  : status === "COMPLIANT"
-                                    ? "Compliant"
-                                    : status === "NON_COMPLIANT"
-                                      ? "Not Compliant"
-                                      : "Undetermined";
-                            return (
-                              <TableRow key={`${item?.repository || "repo"}-${item?.control || "ctrl"}-${index}`}>
-                                <TableCell>{String(item?.question || "-")}</TableCell>
-                                <TableCell>{String(item?.control || "-")}</TableCell>
-                                <TableCell>{String(item?.description || item?.control_name || "-")}</TableCell>
-                                <TableCell>{String(item?.component || item?.control_component || item?.evidence_source || "-")}</TableCell>
-                                <TableCell>{statusChip(status, reason)}</TableCell>
-                                <TableCell>{resultText}</TableCell>
-                                <TableCell>{String(item?.repository || result?.repository || "-")}</TableCell>
-                              </TableRow>
-                            );
-                          })}
-                        </TableBody>
-                      </Table>
-                    </TableContainer>
-                  )}
-
-                  {tab === 1 && (
-                    <TableContainer component={Paper} variant="outlined">
-                      <Table size="small">
-                        <TableHead>
-                          <TableRow>
-                            <TableCell>Control ID</TableCell>
-                            <TableCell>Control Name</TableCell>
-                            <TableCell>Status</TableCell>
-                            <TableCell>Result</TableCell>
-                            <TableCell>Repository</TableCell>
-                          </TableRow>
-                        </TableHead>
-                        <TableBody>
-                          {rows.map((item, index) => {
-                            const status = String(item?.status || "UNDETERMINED").toUpperCase();
-                            const reason = String(item?.fail_reason || item?.findings || item?.answer || "").trim();
-                            const resultText =
-                              item?.compliant === true
-                                ? "Compliant"
-                                : item?.compliant === false
-                                  ? "Not Compliant"
-                                  : status === "COMPLIANT"
-                                    ? "Compliant"
-                                    : status === "NON_COMPLIANT"
-                                      ? "Not Compliant"
-                                      : "Undetermined";
-                            return (
-                              <TableRow key={`${item?.repository || "repo"}-${item?.control || "ctrl"}-${index}-c`}>
-                                <TableCell>{String(item?.control || "-")}</TableCell>
-                                <TableCell>{String(item?.description || item?.control_name || "-")}</TableCell>
-                                <TableCell>{statusChip(status, reason)}</TableCell>
-                                <TableCell>{resultText}</TableCell>
-                                <TableCell>{String(item?.repository || result?.repository || "-")}</TableCell>
-                              </TableRow>
-                            );
-                          })}
-                        </TableBody>
-                      </Table>
-                    </TableContainer>
-                  )}
+                  <TableContainer component={Paper} variant="outlined">
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Control ID</TableCell>
+                          <TableCell>Control Name</TableCell>
+                          <TableCell>Status</TableCell>
+                          <TableCell>Result</TableCell>
+                          <TableCell>Reason</TableCell>
+                          <TableCell>Repository</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {rows.map((item, index) => {
+                          const status = String(item?.status || "UNDETERMINED").toUpperCase();
+                          const reason = getHumanReadableReason(item);
+                          const resultText =
+                            item?.passed === true
+                              ? "Pass"
+                              : item?.passed === false
+                                ? "Fail"
+                                : status === "PASS"
+                                  ? "Pass"
+                                  : status === "FAIL"
+                                    ? "Fail"
+                                    : "Undetermined";
+                          return (
+                            <TableRow key={`${item?.repository || "repo"}-${item?.control || "ctrl"}-${index}`}>
+                              <TableCell>{String(item?.control || "-")}</TableCell>
+                              <TableCell>{String(item?.description || item?.control_name || "-")}</TableCell>
+                              <TableCell>{statusChip(status)}</TableCell>
+                              <TableCell>{resultText}</TableCell>
+                              <TableCell>{reason}</TableCell>
+                              <TableCell>{String(item?.repository || result?.repository || "-")}</TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
                 </Stack>
               )}
 

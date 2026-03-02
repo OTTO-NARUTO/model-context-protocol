@@ -20,8 +20,7 @@ let availableRepos = [];
 let selectedRepos = new Set();
 
 const complianceStandardMap = {
-  iso27001: "ISO27001",
-  soc2: "SOC2"
+  iso27001: "ISO27001"
 };
 
 dashboardTitle.textContent = `${provider} Dashboard`;
@@ -191,31 +190,7 @@ function renderResultTable(result) {
     return;
   }
 
-  const questionRows = rows.map((item) => {
-    const question = escapeHtml(String(item?.question ?? "-"));
-    const repository = escapeHtml(String(item?.repository ?? result?.repository ?? "-"));
-    const controlId = escapeHtml(String(item?.control ?? "-"));
-    const controlName = escapeHtml(String(item?.description ?? item?.control_name ?? "-"));
-    const component = escapeHtml(String(item?.component ?? item?.control_component ?? item?.evidence_source ?? "-"));
-    const status = String(item?.status ?? "UNDETERMINED").toUpperCase();
-    const statusClass = statusToClass(status);
-    const resultText = getComplianceResultText(item);
-    const statusChip = buildStatusChip(item, status, statusClass);
-
-    return `
-      <tr>
-        <td>${question}</td>
-        <td>${controlId}</td>
-        <td>${controlName}</td>
-        <td>${component}</td>
-        <td>${statusChip}</td>
-        <td>${escapeHtml(resultText)}</td>
-        <td>${repository}</td>
-      </tr>
-    `;
-  }).join("");
-
-  const statusOrder = ["COMPLIANT", "NON_COMPLIANT", "ERROR", "UNDETERMINED"];
+  const statusOrder = ["PASS", "FAIL", "ERROR", "UNDETERMINED"];
   const statusCounts = new Map(statusOrder.map((status) => [status, 0]));
 
   for (const item of rows) {
@@ -244,6 +219,7 @@ function renderResultTable(result) {
     const status = String(item?.status ?? "UNDETERMINED").toUpperCase();
     const statusClass = statusToClass(status);
     const resultText = getComplianceResultText(item);
+    const reasonText = escapeHtml(getHumanReadableReason(item));
     const statusChip = buildStatusChip(item, status, statusClass);
 
     return `
@@ -252,111 +228,64 @@ function renderResultTable(result) {
         <td>${controlName}</td>
         <td>${statusChip}</td>
         <td>${escapeHtml(resultText)}</td>
+        <td>${reasonText}</td>
         <td>${repository}</td>
       </tr>
     `;
   }).join("");
 
   resultBox.innerHTML = `
-    <div class="result-tabs" role="tablist" aria-label="Result tabs">
-      <button type="button" class="result-tab-btn active" data-tab-target="questions" role="tab" aria-selected="true">By Questions</button>
-      <button type="button" class="result-tab-btn" data-tab-target="compliance" role="tab" aria-selected="false">By Compliance</button>
-    </div>
-
-    <div class="result-tab-panel active" data-tab-panel="questions" role="tabpanel">
-      <div class="table-wrap">
-        <table class="result-table">
-          <thead>
-            <tr>
-              <th>Question</th>
-              <th>Control ID</th>
-              <th>Control Name</th>
-              <th>Control Component</th>
-              <th>Status</th>
-              <th>Result</th>
-              <th>Repository</th>
-            </tr>
-          </thead>
-          <tbody>${questionRows}</tbody>
-        </table>
-      </div>
-    </div>
-
-    <div class="result-tab-panel" data-tab-panel="compliance" role="tabpanel" hidden>
-      <div class="compliance-summary-grid">${complianceSummary}</div>
-      <div class="table-wrap">
-        <table class="result-table">
-          <thead>
-            <tr>
-              <th>Control ID</th>
-              <th>Control Name</th>
-              <th>Status</th>
-              <th>Result</th>
-              <th>Repository</th>
-            </tr>
-          </thead>
-          <tbody>${complianceRows}</tbody>
-        </table>
-      </div>
+    <div class="compliance-summary-grid">${complianceSummary}</div>
+    <div class="table-wrap">
+      <table class="result-table">
+        <thead>
+          <tr>
+            <th>Control ID</th>
+            <th>Control Name</th>
+            <th>Status</th>
+            <th>Result</th>
+            <th>Reason</th>
+            <th>Repository</th>
+          </tr>
+        </thead>
+        <tbody>${complianceRows}</tbody>
+      </table>
     </div>
   `;
-
-  const tabButtons = resultBox.querySelectorAll(".result-tab-btn");
-  const tabPanels = resultBox.querySelectorAll(".result-tab-panel");
-
-  for (const button of tabButtons) {
-    button.addEventListener("click", () => {
-      const target = button.dataset.tabTarget;
-      if (!target) return;
-
-      for (const tabButton of tabButtons) {
-        const isActive = tabButton === button;
-        tabButton.classList.toggle("active", isActive);
-        tabButton.setAttribute("aria-selected", isActive ? "true" : "false");
-      }
-
-      for (const panel of tabPanels) {
-        const isActive = panel.dataset.tabPanel === target;
-        panel.classList.toggle("active", isActive);
-        panel.hidden = !isActive;
-      }
-    });
-  }
 }
 
 function statusToClass(status) {
-  if (status === "COMPLIANT") return "ok";
-  if (status === "NON_COMPLIANT") return "bad";
+  if (status === "PASS") return "ok";
+  if (status === "FAIL") return "bad";
   if (status === "ERROR") return "err";
   return "unknown";
 }
 
 function getComplianceResultText(item) {
-  if (item?.compliant === true) return "Compliant";
-  if (item?.compliant === false) return "Not Compliant";
+  if (item?.passed === true) return "Pass";
+  if (item?.passed === false) return "Fail";
   const status = String(item?.status ?? "").toUpperCase();
-  if (status === "COMPLIANT") return "Compliant";
-  if (status === "NON_COMPLIANT") return "Not Compliant";
+  if (status === "PASS") return "Pass";
+  if (status === "FAIL") return "Fail";
   return "Undetermined";
 }
 
-function buildStatusChip(item, status, statusClass) {
-  const normalizedStatus = String(status ?? "").toUpperCase();
-  const reasonCandidates = [
-    item?.fail_reason,
-    item?.findings,
-    item?.answer
-  ];
-  const reason = reasonCandidates
-    .map((value) => String(value ?? "").trim())
-    .find(Boolean) ?? "";
-
-  if (!reason) {
-    return `<span class="status-chip ${statusClass}">${escapeHtml(normalizedStatus)}</span>`;
+function getHumanReadableReason(item) {
+  const text = String(item?.fail_reason ?? item?.findings ?? item?.answer ?? "").trim();
+  if (text) {
+    return text;
   }
 
-  const title = escapeHtml(reason).replaceAll("\n", " ");
-  return `<span class="status-chip ${statusClass} with-reason" title="${title}">${escapeHtml(normalizedStatus)}</span>`;
+  const status = String(item?.status ?? "UNDETERMINED").toUpperCase();
+  if (status === "PASS") return "Control passed based on the available repository evidence.";
+  if (status === "FAIL") return "Control failed based on the available repository evidence.";
+  if (status === "ERROR") return "Evaluation failed due to a tool or processing error.";
+  return "Insufficient or unclear evidence to determine compliance.";
+}
+
+function buildStatusChip(_item, status, statusClass) {
+  const normalizedStatus = String(status ?? "").toUpperCase();
+  return `<span class="status-chip ${statusClass}">${escapeHtml(normalizedStatus)}</span>`;
 }
 
 function escapeHtml(value) {
