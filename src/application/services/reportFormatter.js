@@ -59,8 +59,8 @@ export class ReportFormatter {
       "Control ID",
       "Control Name",
       "Status",
-      "API Call",
-      "Reason",
+      "API Call Reason",
+      "Status Reason",
       "Evaluated At"
     ];
   }

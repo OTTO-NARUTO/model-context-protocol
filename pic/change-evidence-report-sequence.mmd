@@ -1,156 +1,81 @@
-﻿sequenceDiagram
+sequenceDiagram
 autonumber
-actor PU as Platform User
+
+box rgb(230, 244, 255) Us
 participant FE as Browser UI
-participant APP as Express App
-participant TM as Tenant Middleware
-participant VM as Validation Middleware
-participant AC as Auth Controller
-participant CC as Compliance Controller
-participant OS as OAuth Service
-participant DB as Database
-participant ENC as Encryption
-participant TS as Tenant Session
-participant STR as Tool Strategy
-participant RES as Tool Resolver
-participant MCP as MCP Client
-participant REST as REST Client
-participant RN as Response Normalizer
-participant EE as Evaluation Engine
-participant RF as Report Formatter
-participant OP as OAuth Provider
-participant EMCP as External MCP Server
-participant API as Provider REST API
-
-rect rgb(230, 242, 255)
-Note over PU,FE: Client Actions
-PU->>FE: Open app
-FE->>APP: GET /api/auth/{provider}/status
+participant API as Backend API
+participant CC as ComplianceController
+participant OS as OAuthService
+participant STR as ToolExecutionStrategy
+participant RES as ToolResolver
+participant MCP as Backend McpClient
+participant RFC as REST Fallback Client
+participant RN as ResponseNormalizer
+participant EE as EvaluationEngine
+participant RF as ReportFormatter
 end
 
-rect rgb(232, 255, 238)
-Note over APP,RF: Our System (App, DB, Services)
-APP->>TM: Validate tenant session cookie
-TM->>TS: Verify token
-alt valid session
-  TS-->>TM: tenantId
-  TM-->>APP: next
-  APP->>VM: Validate request
-  APP->>AC: status
-  AC->>OS: status(provider, tenantId)
-  OS->>DB: getToken
-  DB-->>OS: token or null
-  OS-->>AC: connected flag
-  AC-->>FE: status response
-else invalid session
-  TM-->>FE: 401
-end
+box rgb(255, 247, 230) Client
+participant OP as Provider OAuth Page
 end
 
-rect rgb(230, 242, 255)
-PU->>FE: Click connect
-FE->>APP: GET /api/auth/{provider}/connect
+box rgb(232, 255, 242) MCP Servers
+participant GHM as GitHub MCP Server
+participant GLM as GitLab MCP Server
+participant BBM as Bitbucket MCP Server
 end
 
-rect rgb(232, 255, 238)
-APP->>TM: tenant middleware
-TM-->>APP: allow
-APP->>VM: Validate provider
-APP->>AC: connect
-AC->>OS: getConnectUrl
-OS->>DB: saveOAuthState
-OS-->>AC: authorize URL
-AC-->>FE: redirect
-end
+participant PRA as Provider REST APIs
 
-rect rgb(255, 239, 230)
-Note over OP,API: External Servers (GitHub/GitLab/Bitbucket)
-FE->>OP: authorize
-OP-->>FE: callback with code and state
-end
+Note over FE: Browser opens dashboard and starts provider connect
+FE->>API: GET /api/auth/{provider}/connect
+API-->>FE: Redirect to provider authorization URL
+FE->>OP: Authorize app access
+OP-->>API: Callback with code/state
+API->>OS: Exchange code and store access token
+OS-->>API: Token stored
 
-rect rgb(232, 255, 238)
-FE->>APP: GET callback
-APP->>TM: callback bypass
-APP->>VM: Validate params
-APP->>AC: callback
-AC->>OS: handleCallback
-OS->>DB: getOAuthState
-alt invalid state
-  OS-->>AC: error
-  AC-->>FE: error response
-else valid state
-  OS->>DB: deleteOAuthState
-  OS->>OP: exchange code for token
-  OP-->>OS: access token
-  OS->>ENC: encrypt token
-  OS->>DB: upsertToken
-  AC->>TS: create session token
-  TS-->>AC: signed cookie
-  AC-->>FE: set cookie and redirect dashboard
-end
+Note over FE: Browser starts compliance run
+FE->>API: POST /api/compliance/evaluate-standard
+API->>CC: evaluateStandard(request)
+CC->>OS: getAccessToken(provider, tenant)
+OS-->>CC: Access token
 
-FE->>APP: GET repos list
-APP->>TM: verify session
-APP->>VM: Validate query
-APP->>AC: repos
-AC->>OS: listRepos
-OS->>DB: getToken
-OS->>ENC: decrypt token
-OS->>API: fetch repos
-API-->>OS: repos payload
-OS-->>AC: normalized repos
-AC-->>FE: repos response
-end
+loop each selected repository and mapped control
+  CC->>STR: executeTool(provider, toolName, params)
+  STR->>MCP: listTools(provider)
+  STR->>RES: resolve(provider, toolName, mcpExposedTools, preference)
+  RES-->>STR: mode = mcp or rest
 
-rect rgb(230, 242, 255)
-PU->>FE: Run compliance check
-FE->>APP: POST /api/compliance/evaluate-standard
-end
-
-rect rgb(232, 255, 238)
-APP->>TM: verify session
-APP->>VM: Validate body
-APP->>CC: evaluateStandard
-CC->>CC: Filter ISO27001 controls to 8.8, 8.9
-CC->>OS: getAccessToken
-OS->>DB: getToken
-OS->>ENC: decrypt token
-OS-->>CC: access token
-
-loop each selected repo
-  loop control 8.8, 8.9
-  CC->>STR: executeTool
-  STR->>MCP: listTools
-  alt MCP available
-    MCP->>EMCP: tools/list or tools/call
-    EMCP-->>MCP: evidence
-    MCP-->>STR: MCP evidence
-  else fallback
-    STR->>REST: callTool
-    REST->>API: REST call
-    API-->>REST: REST evidence
-    REST-->>STR: fallback evidence
+  alt mode = mcp
+    MCP->>MCP: Resolve provider MCP URL
+    alt provider = github
+      MCP->>GHM: JSON-RPC tools/call
+      GHM-->>MCP: Raw MCP evidence
+    else provider = gitlab
+      MCP->>GLM: JSON-RPC tools/call
+      GLM-->>MCP: Raw MCP evidence
+    else provider = bitbucket
+      MCP->>BBM: JSON-RPC tools/call
+      BBM-->>MCP: Raw MCP evidence
+    end
+    MCP-->>STR: Evidence payload
+  else mode = rest fallback
+    STR->>RFC: callTool(provider, toolName, params)
+    RFC->>PRA: Provider REST request
+    PRA-->>RFC: REST evidence payload
+    RFC-->>STR: Evidence payload
   end
-  STR->>RES: resolve mode
-  STR->>RN: normalize evidence
-  RN-->>STR: standardized payload
-  STR-->>CC: evidence
-  CC->>EE: evaluate control
-  EE-->>CC: verdict
-  CC->>RF: format report row
-  RF-->>CC: row
-  end
+
+  STR->>RN: normalizeEvidence(payload)
+  RN-->>STR: Standardized evidence
+  STR-->>CC: Collected evidence
+  CC->>EE: evaluate(requirement, evidence)
+  EE-->>CC: Verdict
+  CC->>RF: formatControlResult(verdict)
+  RF-->>CC: Report row
 end
 
-CC-->>FE: final report response
-FE-->>PU: render results
-
-opt disconnect
-  FE->>APP: POST /api/auth/{provider}/disconnect
-  APP->>AC: disconnect
-  AC->>OS: revoke and delete token
-  OS->>DB: deleteToken
-  AC-->>FE: disconnected
-end
-end
+CC-->>API: Final compliance report
+API-->>FE: JSON response
+Note over FE: Render test report table

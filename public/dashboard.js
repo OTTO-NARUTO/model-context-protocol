@@ -243,8 +243,8 @@ function renderResultTable(result) {
             <th>Control ID</th>
             <th>Control Name</th>
             <th>Status</th>
-            <th>API Call (Why)</th>
-            <th>Reason</th>
+            <th>API Call Reason</th>
+            <th>Status Reason</th>
             <th>Repository</th>
           </tr>
         </thead>
