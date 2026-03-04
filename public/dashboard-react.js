@@ -5,7 +5,6 @@ const {
   Button,
   Card,
   CardContent,
-  Checkbox,
   Chip,
   CircularProgress,
   Container,
@@ -26,7 +25,8 @@ const {
   ThemeProvider,
   Tooltip,
   Typography,
-  createTheme
+  createTheme,
+  Icon
 } = MaterialUI;
 
 const provider = window.location.pathname.split("/").filter(Boolean).pop();
@@ -80,7 +80,7 @@ const theme = createTheme({
     },
   },
   typography: {
-    fontFamily: "'Roboto', 'Helvetica', 'Arial', sans-serif",
+    fontFamily: "'Roboto', 'Helvetica', 'Arial', sans-serif, 'Material Icons'",
     h4: {
       fontWeight: 700,
       fontSize: "2.125rem",
@@ -404,6 +404,64 @@ function App() {
     return "Repository";
   }
 
+  function repositoryCategory(name) {
+    const lowered = String(name || "").toLowerCase();
+    if (lowered.includes("frontend")) return "frontend";
+    if (lowered.includes("backend")) return "backend";
+    if (lowered.includes("mobile")) return "mobile";
+    if (lowered.includes("infra")) return "cloud";
+    if (lowered.includes("doc")) return "docs";
+    return "default";
+  }
+
+  function repositoryIconSvg(name) {
+    const category = repositoryCategory(name);
+    if (category === "frontend") {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="18" height="18" aria-hidden="true">
+          <rect x="3" y="4" width="18" height="12" rx="1.8" />
+          <path d="M8 20h8M12 16v4" />
+        </svg>
+      );
+    }
+    if (category === "backend") {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="18" height="18" aria-hidden="true">
+          <ellipse cx="12" cy="6" rx="7" ry="3" />
+          <path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6" />
+        </svg>
+      );
+    }
+    if (category === "mobile") {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="18" height="18" aria-hidden="true">
+          <rect x="7" y="2.5" width="10" height="19" rx="2" />
+          <path d="M11 18.5h2" />
+        </svg>
+      );
+    }
+    if (category === "cloud") {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="18" height="18" aria-hidden="true">
+          <path d="M7.5 18a4.5 4.5 0 1 1 .9-8.9A5.8 5.8 0 0 1 19 11.2 3.9 3.9 0 1 1 19 19H8a4 4 0 0 1-.5-1z" />
+        </svg>
+      );
+    }
+    if (category === "docs") {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="18" height="18" aria-hidden="true">
+          <path d="M7 3h7l4 4v14H7z" />
+          <path d="M14 3v5h5M9.5 13h5M9.5 16h5" />
+        </svg>
+      );
+    }
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="18" height="18" aria-hidden="true">
+        <path d="M3 7h7l2 2h9v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+      </svg>
+    );
+  }
+
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
@@ -460,20 +518,49 @@ function App() {
                 {availableRepos.map((name) => {
                   const checked = selectedRepos.includes(name);
                   return (
-                    <ListItem key={name} disableGutters sx={{ py: 1.15 }}>
-                      <Checkbox
-                        checked={checked}
-                        onChange={() => {
-                          setSelectedRepos((prev) => (
-                            prev.includes(name) ? prev.filter((item) => item !== name) : [...prev, name]
-                          ));
-                        }}
-                        sx={{ mr: 1 }}
-                      />
-                      <ListItemText
-                        primary={<Typography sx={{ fontWeight: 700 }} color="text.primary">{name}</Typography>}
-                        secondary={<Typography variant="body2" color="text.secondary">{repositoryHelperText(name)}</Typography>}
-                      />
+                    <ListItem
+                      key={name}
+                      disableGutters
+                      onClick={() => {
+                        setSelectedRepos((prev) => (
+                          prev.includes(name) ? prev.filter((item) => item !== name) : [...prev, name]
+                        ));
+                      }}
+                      sx={{
+                        py: 1.15,
+                        px: 1,
+                        borderRadius: 1.5,
+                        cursor: "pointer",
+                        transition: "background-color 180ms ease, border-color 180ms ease",
+                        border: "1px solid",
+                        borderColor: checked ? "#9cc7f0" : "transparent",
+                        bgcolor: checked ? "#f4f9ff" : "transparent",
+                        "&:hover": {
+                          bgcolor: checked ? "#edf6ff" : "#f8fbff",
+                          borderColor: checked ? "#8cbbea" : "#e1ecf8"
+                        }
+                      }}
+                    >
+                      <Box sx={{ display: "flex", alignItems: "center", mr: 1 }}>
+                        <Box
+                          sx={{
+                            width: 34,
+                            height: 34,
+                            borderRadius: 1.5,
+                            bgcolor: "#f1f7ff",
+                            border: "1px solid #d9e8f9",
+                            display: "grid",
+                            placeItems: "center",
+                            mr: 1.2
+                          }}
+                        >
+                          <Box sx={{ color: "#0068D1", lineHeight: 0 }}>{repositoryIconSvg(name)}</Box>
+                        </Box>
+                        <ListItemText
+                          primary={<Typography sx={{ fontWeight: 700 }} color="text.primary">{name}</Typography>}
+                          secondary={<Typography variant="body2" color="text.secondary">{repositoryHelperText(name)}</Typography>}
+                        />
+                      </Box>
                     </ListItem>
                   );
                 })}
@@ -486,25 +573,59 @@ function App() {
 
           <Paper elevation={0} sx={{ p: 2.5, border: "1px solid #d8dee8", borderRadius: 2.5 }}>
             <Typography variant="h6" color="text.primary" sx={{ mb: 2 }}>Select Compliance Standard</Typography>
-            <Grid container spacing={1.5}>
-              <Grid item xs={12} md={12}>
-                <Button
-                  fullWidth
-                  variant={selectedCompliance === "iso27001" ? "contained" : "outlined"}
+            <Grid container spacing={3} justifyContent="center">
+              <Grid item xs={12} md={4}>
+                <Paper
+                  elevation={0}
                   onClick={() => setSelectedCompliance("iso27001")}
-                  color="primary"
                   sx={{
-                    justifyContent: "flex-start",
-                    py: 1.2,
-                    borderColor: selectedCompliance === "iso27001" ? "none" : theme.palette.divider,
+                    p: 3,
+                    border: "1px solid",
+                    borderColor: selectedCompliance === "iso27001" ? "#0068D1" : "#d7e6f7",
+                    borderRadius: 3,
+                    height: "100%",
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    textAlign: "center",
+                    gap: 2,
+                    cursor: "pointer",
+                    transition: "all 220ms ease",
+                    boxShadow: selectedCompliance === "iso27001" ? "0 10px 30px rgba(0, 104, 209, 0.12)" : "none",
                     "&:hover": {
-                      borderColor: selectedCompliance === "iso27001" ? "none" : theme.palette.primary.light,
-                      backgroundColor: selectedCompliance === "iso27001" ? theme.palette.primary.dark : theme.palette.action.hover,
+                      borderColor: "#9cc7f0",
+                      boxShadow: "0 10px 30px rgba(0, 104, 209, 0.12)",
+                      transform: "translateY(-3px)"
                     }
                   }}
                 >
-                  ISO 27001
-                </Button>
+                  <Box
+                    sx={{
+                      width: 58,
+                      height: 58,
+                      borderRadius: 2,
+                      bgcolor: "#f1f7ff",
+                      border: "1px solid #d9e8f9",
+                      display: "grid",
+                      placeItems: "center"
+                    }}
+                  >
+                    <Box
+                      component="img"
+                      src="/images.png"
+                      alt="ISO 27001"
+                      sx={{ width: 30, height: 30, objectFit: "contain" }}
+                    />
+                  </Box>
+
+                  <Typography variant="h5" sx={{ fontWeight: 800, color: "#0f172a" }}>
+                    ISO 27001
+                  </Typography>
+
+                  <Typography variant="body2" sx={{ color: "#4a6380", minHeight: 64 }}>
+                    Assess repository compliance against ISO 27001 controls using automated evidence checks.
+                  </Typography>
+                </Paper>
               </Grid>
             </Grid>
           </Paper>
@@ -553,9 +674,9 @@ function App() {
                     ))}
                   </Grid>
 
-                  <TableContainer component={Paper} variant="outlined">
-                    <Table size="small">
-                      <TableHead>
+                  <TableContainer component={Paper} variant="outlined" sx={{ border: "1px solid #e0e0e0" }}>
+                    <Table size="small" sx={{ "& .MuiTableCell-root": { border: "1px solid #e0e0e0" } }}>
+                      <TableHead sx={{ bgcolor: "#f2f2f2" }}>
                         <TableRow>
                           <TableCell sx={{ fontWeight: 700, color: theme.palette.text.primary }}>Control ID</TableCell>
                           <TableCell sx={{ fontWeight: 700, color: theme.palette.text.primary }}>Control Name</TableCell>
@@ -571,7 +692,7 @@ function App() {
                           const reason = getHumanReadableReason(item);
                           const apiCall = getApiCallSummary(item);
                           return (
-                            <TableRow key={`${item?.repository || "repo"}-${item?.control || "ctrl"}-${index}`}>
+                            <TableRow key={`${item?.repository || "repo"}-${item?.control || "ctrl"}-${index}`} sx={{ bgcolor: index % 2 ? "#fafafa" : "#ffffff" }}>
                               <TableCell>{String(item?.control || "-")}</TableCell>
                               <TableCell>{String(item?.description || item?.control_name || "-")}</TableCell>
                               <TableCell>{statusChip(status)}</TableCell>
