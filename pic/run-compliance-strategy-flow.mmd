@@ -1,0 +1,86 @@
+flowchart LR
+    subgraph LEGEND[Legend]
+        LU[Us]
+        LC[Client]
+        LM[MCP Server]
+    end
+
+    A[Browser opens dashboard] --> B[User clicks provider connect]
+    B --> C[Backend auth connect endpoint]
+    C --> D[Provider OAuth page]
+    D --> E[Backend auth callback]
+    E --> F[OAuthService stores access token]
+    F --> G[Browser starts compliance run]
+
+    G --> H[Backend API]
+    H --> I[ComplianceController]
+    I --> J[OAuthService getAccessToken]
+    J --> K[Mapping stage]
+    K --> L[ToolExecutionStrategy]
+    L --> M{ToolResolver selects mode}
+
+    A -. what it does .-> AX[User opens app in browser]
+    B -. what it does .-> BX[Starts OAuth login for selected provider]
+    C -. what it does .-> CX[Redirects user to provider authorization URL]
+    D -. what it does .-> DX[User grants access at provider]
+    E -. what it does .-> EX[Provider sends code and state to backend callback]
+    F -. what it does .-> FX[Backend exchanges code and stores encrypted token]
+    G -. what it does .-> GX[User submits standard provider repositories]
+    H -. what it does .-> HX[Receives compliance evaluate request]
+    I -. what it does .-> IX[Validates input and prepares controls]
+    J -. what it does .-> JX[Loads stored token for tenant and provider]
+    K -. what it does .-> KX[Resolves tool names and evaluation logic]
+    L -. what it does .-> LX[Executes tool calls and gathers evidence]
+    M -. decision logic .-> MX[Decision uses exposed MCP tools provider support and execution preference]
+
+    M -->|MCP| N[Backend McpClient]
+    N --> N1[Provider MCP URL]
+    N1 --> N2[JSON RPC tools call]
+    N2 --> N3{Provider}
+    N3 -->|github| N4[GitHub MCP server]
+    N3 -->|gitlab| N5[GitLab MCP server]
+    N3 -->|bitbucket| N6[Bitbucket MCP server]
+    N4 --> P0[Response conversion layer]
+    N5 --> P0
+    N6 --> P0
+
+    N -. what it does .-> NX[Calls MCP endpoint with tool name arguments and bearer token]
+
+    M -->|REST fallback| O[REST fallback client]
+    O --> O1{Provider REST API}
+    O1 -->|github| O2[GitHub REST API]
+    O1 -->|gitlab| O3[GitLab REST API]
+    O1 -->|bitbucket| O4[Bitbucket REST API]
+    O2 --> P0
+    O3 --> P0
+    O4 --> P0
+
+    O -. what it does .-> OX[Builds URL from REST contracts and calls provider API directly]
+    P0 -. what it does .-> P0X[ToolExecutionStrategy normalizeEvidence with ResponseNormalizer]
+    P0 --> P[Normalize evidence payload]
+    P -. what it does .-> PX[Controller extracts common payload for evaluation]
+
+    P --> Q[EvaluationEngine]
+    Q --> R[ReportFormatter]
+    R --> S[Backend response JSON]
+    S --> T[Browser shows compliance report]
+
+    Q -. what it does .-> QX[Applies control logic and produces pass fail metadata snapshot]
+    R -. what it does .-> RX[Builds summary rows findings and report structure]
+    S -. what it does .-> SX[Returns final compliance output]
+    T -. what it does .-> TX[User sees table summary and reasons]
+
+    classDef us fill:#e6f4ff,stroke:#1d4ed8,color:#0f172a,stroke-width:1.5px;
+    classDef client fill:#fff7e6,stroke:#b45309,color:#111827,stroke-width:1.5px;
+    classDef mcp fill:#e8fff2,stroke:#047857,color:#111827,stroke-width:1.5px;
+    classDef neutral fill:#f8fafc,stroke:#64748b,color:#0f172a,stroke-width:1px;
+
+    class A,B,C,E,F,G,H,I,J,K,L,M,N,N1,N2,O,P0,P,Q,R,S,T us;
+    class D client;
+    class N4,N5,N6 mcp;
+    class N3,O1,O2,O3,O4 neutral;
+    class AX,BX,CX,DX,EX,FX,GX,HX,IX,JX,KX,LX,MX,NX,OX,P0X,PX,QX,RX,SX,TX neutral;
+
+    class LU us;
+    class LC client;
+    class LM mcp;

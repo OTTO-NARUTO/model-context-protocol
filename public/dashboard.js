@@ -218,7 +218,7 @@ function renderResultTable(result) {
     const controlName = escapeHtml(String(item?.description ?? item?.control_name ?? "-"));
     const status = String(item?.status ?? "UNDETERMINED").toUpperCase();
     const statusClass = statusToClass(status);
-    const resultText = getComplianceResultText(item);
+    const apiCallText = escapeHtml(getApiCallSummary(item));
     const reasonText = escapeHtml(getHumanReadableReason(item));
     const statusChip = buildStatusChip(item, status, statusClass);
 
@@ -227,7 +227,7 @@ function renderResultTable(result) {
         <td>${controlId}</td>
         <td>${controlName}</td>
         <td>${statusChip}</td>
-        <td>${escapeHtml(resultText)}</td>
+        <td>${apiCallText}</td>
         <td>${reasonText}</td>
         <td>${repository}</td>
       </tr>
@@ -243,8 +243,8 @@ function renderResultTable(result) {
             <th>Control ID</th>
             <th>Control Name</th>
             <th>Status</th>
-            <th>Result</th>
-            <th>Reason</th>
+            <th>API Call Reason</th>
+            <th>Status Reason</th>
             <th>Repository</th>
           </tr>
         </thead>
@@ -261,15 +261,6 @@ function statusToClass(status) {
   return "unknown";
 }
 
-function getComplianceResultText(item) {
-  if (item?.passed === true) return "Pass";
-  if (item?.passed === false) return "Fail";
-  const status = String(item?.status ?? "").toUpperCase();
-  if (status === "PASS") return "Pass";
-  if (status === "FAIL") return "Fail";
-  return "Undetermined";
-}
-
 function getHumanReadableReason(item) {
   const text = String(item?.fail_reason ?? item?.findings ?? item?.answer ?? "").trim();
   if (text) {
@@ -281,6 +272,12 @@ function getHumanReadableReason(item) {
   if (status === "FAIL") return "Control failed based on the available repository evidence.";
   if (status === "ERROR") return "Evaluation failed due to a tool or processing error.";
   return "Insufficient or unclear evidence to determine compliance.";
+}
+
+function getApiCallSummary(item) {
+  const mode = String(item?.api_call ?? "").trim().toUpperCase() || "UNKNOWN";
+  const reason = String(item?.api_call_reason ?? "").trim();
+  return reason ? `${mode}: ${reason}` : mode;
 }
 
 function buildStatusChip(_item, status, statusClass) {

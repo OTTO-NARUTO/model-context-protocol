@@ -255,7 +255,7 @@ export default class EvaluationEngine {
     const scope = mergedPrs.length > 0 ? mergedPrs : prs;
     const failing = scope
       .filter((pr) => this._extractApprovalCount(pr) < threshold)
-      .map((pr) => String(pr?.number ?? pr?.iid ?? pr?.id ?? "unknown"))
+      .map((pr) => String(pr?.number ?? pr?.pullNumber ?? pr?.pull_number ?? pr?.iid ?? pr?.id ?? "unknown"))
       .slice(0, 10);
     const pass = failing.length === 0;
 
@@ -667,7 +667,13 @@ export default class EvaluationEngine {
   }
 
   _extractApprovalCount(pr) {
-    const approvals = Number(pr?.approvals ?? pr?.approved ?? 0);
+    const approvals = Number(
+      pr?.approved_reviews_count ??
+      pr?.approvedReviewCount ??
+      pr?.approvals ??
+      pr?.approved ??
+      0
+    );
     if (approvals > 0) return approvals;
     const approvedBy = this._asArray(pr?.approved_by ?? pr?.approvers);
     if (approvedBy.length > 0) return approvedBy.length;

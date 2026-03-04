@@ -137,6 +137,39 @@ function extractEvidencePayload(evidence) {
   return evidence?.raw ?? evidence?.standardized ?? evidence;
 }
 
+function normalizeExecutionMode(mode) {
+  const normalized = String(mode ?? "").toLowerCase();
+  if (normalized === "mcp") return "MCP";
+  if (normalized === "rest") return "REST";
+  return "UNKNOWN";
+}
+
+function summarizeExecution(executions) {
+  const entries = (Array.isArray(executions) ? executions : [])
+    .filter((entry) => entry && typeof entry === "object");
+  if (entries.length === 0) {
+    return {
+      apiCall: "UNKNOWN",
+      apiCallReason: "Execution metadata unavailable."
+    };
+  }
+
+  const modes = [...new Set(entries.map((entry) => normalizeExecutionMode(entry.executionMode)).filter(Boolean))];
+  const apiCall = modes.length > 0 ? modes.join("+") : "UNKNOWN";
+  const reasonParts = entries
+    .map((entry) => {
+      const tool = String(entry?.toolName ?? "tool");
+      const reason = String(entry?.reason ?? "").trim();
+      return reason ? `${tool}: ${reason}` : "";
+    })
+    .filter(Boolean);
+  const apiCallReason = reasonParts.length > 0
+    ? [...new Set(reasonParts)].join(" | ")
+    : "No resolution reason returned.";
+
+  return { apiCall, apiCallReason };
+}
+
 function isRetryableToolError(message) {
   return /unknown tool|missing required parameter|required parameter/i.test(String(message ?? ""));
 }
@@ -289,6 +322,8 @@ export class ComplianceController {
         passed,
         evidence_source: plan.evidence_source,
         tool_used: collected.toolUsed,
+        api_call: collected.apiCall,
+        api_call_reason: collected.apiCallReason,
         status,
         fail_reason: reason,
         evidence_snapshot: verdict.evidenceSnapshot,
@@ -305,7 +340,9 @@ export class ComplianceController {
           fail_reason: reason,
           evaluated_at: evaluatedAt,
           evidence_source: plan.evidence_source,
-          tool_used: collected.toolUsed
+          tool_used: collected.toolUsed,
+          api_call: collected.apiCall,
+          api_call_reason: collected.apiCallReason
         })
       });
     } catch (error) {
@@ -394,6 +431,8 @@ export class ComplianceController {
               passed,
               evidence_source: item.evidence_source,
               tool_used: collected.toolUsed,
+              api_call: collected.apiCall,
+              api_call_reason: collected.apiCallReason,
               status,
               fail_reason: reason,
               evidence_snapshot: verdict.evidenceSnapshot,
@@ -412,6 +451,8 @@ export class ComplianceController {
               passed: null,
               evidence_source: item.evidence_source,
               tool_used: resolveToolNames(item.mcp_tool, provider).join("+"),
+              api_call: "UNKNOWN",
+              api_call_reason: "Evaluation failed before execution mode could be resolved.",
               status: "ERROR",
               fail_reason: message,
               findings: message,
@@ -516,7 +557,21 @@ export class ComplianceController {
         return {
           toolUsed: repositoryEvidence ? "get_repository+get_branch_protection" : "get_branch_protection",
           traceId: protectionEvidence?.traceId ?? repositoryEvidence?.traceId ?? randomUUID(),
-          evidencePayload: normalizedProtectionPayload
+          evidencePayload: normalizedProtectionPayload,
+          ...summarizeExecution([
+            repositoryEvidence
+              ? {
+                toolName: "get_repository",
+                executionMode: repositoryEvidence?.executionMode,
+                reason: repositoryEvidence?.resolution?.reason
+              }
+              : null,
+            {
+              toolName: "get_branch_protection",
+              executionMode: protectionEvidence?.executionMode,
+              reason: protectionEvidence?.resolution?.reason
+            }
+          ])
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error ?? "");
@@ -538,7 +593,21 @@ export class ComplianceController {
             ? "get_repository+list_branches(fallback)"
             : "list_branches(fallback)",
           traceId: branchesEvidence?.traceId ?? repositoryEvidence?.traceId ?? randomUUID(),
-          evidencePayload: extractEvidencePayload(branchesEvidence)
+          evidencePayload: extractEvidencePayload(branchesEvidence),
+          ...summarizeExecution([
+            repositoryEvidence
+              ? {
+                toolName: "get_repository",
+                executionMode: repositoryEvidence?.executionMode,
+                reason: repositoryEvidence?.resolution?.reason
+              }
+              : null,
+            {
+              toolName: "list_branches",
+              executionMode: branchesEvidence?.executionMode,
+              reason: branchesEvidence?.resolution?.reason
+            }
+          ])
         };
       }
     }
@@ -565,7 +634,12 @@ export class ComplianceController {
     return {
       toolUsed: results.map((item) => item.name).join("+"),
       traceId: primary.evidence?.traceId ?? randomUUID(),
-      evidencePayload: extractEvidencePayload(primary.evidence)
+      evidencePayload: extractEvidencePayload(primary.evidence),
+      ...summarizeExecution(results.map((item) => ({
+        toolName: item?.name,
+        executionMode: item?.evidence?.executionMode,
+        reason: item?.evidence?.resolution?.reason
+      })))
     };
   };
 
@@ -599,6 +673,13 @@ export class ComplianceController {
 
     const dedupedPullNumbers = [...new Set(mergedPrNumbers)];
     const pullRequests = [];
+    const executionEntries = [
+      {
+        toolName: mergedEvidence?.toolUsed,
+        executionMode: mergedEvidence?.executionMode,
+        reason: mergedEvidence?.reason
+      }
+    ];
     for (const pullNumber of dedupedPullNumbers) {
       const reviewEvidence = await this.tryToolCandidates(
         provider,
@@ -621,6 +702,13 @@ export class ComplianceController {
         const state = String(review?.state ?? review?.status ?? "").toUpperCase();
         return state === "APPROVED" || state === "APPROVE";
       }).length;
+      if (reviewEvidence) {
+        executionEntries.push({
+          toolName: reviewEvidence.toolUsed,
+          executionMode: reviewEvidence.executionMode,
+          reason: reviewEvidence.reason
+        });
+      }
 
       pullRequests.push({
         pullNumber,
@@ -638,7 +726,8 @@ export class ComplianceController {
         pull_requests: pullRequests,
         merged_pr_count: pullRequests.length,
         zero_merged_policy: zeroMergedPolicy
-      }
+      },
+      ...summarizeExecution(executionEntries)
     };
   };
 
@@ -655,7 +744,9 @@ export class ComplianceController {
         return {
           toolUsed: candidate.toolName,
           traceId: evidence?.traceId ?? randomUUID(),
-          payload: extractEvidencePayload(evidence)
+          payload: extractEvidencePayload(evidence),
+          executionMode: evidence?.executionMode,
+          reason: evidence?.resolution?.reason
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error ?? "");
@@ -689,7 +780,16 @@ export class ComplianceController {
     if (Array.isArray(payload)) return payload;
     if (Array.isArray(payload?.items)) return payload.items;
     if (Array.isArray(payload?.data)) return payload.data;
+    if (Array.isArray(payload?.data?.items)) return payload.data.items;
+    if (Array.isArray(payload?.data?.reviews)) return payload.data.reviews;
     if (Array.isArray(payload?.reviews)) return payload.reviews;
+    if (Array.isArray(payload?.result)) return payload.result;
+    if (Array.isArray(payload?.result?.items)) return payload.result.items;
+    if (Array.isArray(payload?.result?.reviews)) return payload.result.reviews;
+    if (payload && typeof payload === "object") {
+      const state = String(payload?.state ?? payload?.status ?? "").trim();
+      if (state) return [payload];
+    }
     return [];
   };
 }
