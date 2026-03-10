@@ -1,0 +1,279 @@
+{
+  "report_type": "EVIDENCE_FAILURE_REPORT",
+  "generated_at": "2026-03-05T12:15:09.820Z",
+  "standard": "ISO27001",
+  "provider": "github",
+  "repositories": [
+    "OTTO-NARUTO/model-context-protocol"
+  ],
+  "summary": {
+    "repositories": 1,
+    "total": 2,
+    "pass": 0,
+    "fail": 2,
+    "errors": 0
+  },
+  "total_results": 2,
+  "failed_or_error_count": 2,
+  "failed_controls": [
+    {
+      "repository": "OTTO-NARUTO/model-context-protocol",
+      "control": "8.9",
+      "control_name": "Configuration management",
+      "status": "FAIL",
+      "why_failed": "Checks run: branch protection on 4 branch(es). Branch protection enabled: Yes. Protected branches: 1. Unprotected critical branches: 3 (8.28, plumbing-issue, update-1).",
+      "api_call": "REST+MCP",
+      "api_call_reason": "get_repository: REST selected by registry support and execution preference. | list_branches: Tool is exposed by MCP and selected by execution preference.",
+      "evidence_snapshot": {
+        "total_branches": 4,
+        "protected_branches": 1,
+        "unprotected_critical_branches": []
+      },
+      "metadata": {
+        "strategy": "branch_protection",
+        "requirementType": "all_must_be_true",
+        "requirementField": "",
+        "totalChecked": 4,
+        "protectedCount": 1,
+        "failingItems": [
+          "8.28",
+          "plumbing-issue",
+          "update-1"
+        ],
+        "unprotectedCriticalBranches": []
+      },
+      "dependency_status": {
+        "required_tools": [
+          "get_branch_protection",
+          "get_repository"
+        ],
+        "executed_tools": [
+          "get_repository",
+          "list_branches"
+        ],
+        "required_tools_with_call_mode": [
+          {
+            "tool": "get_branch_protection",
+            "call_mode": "UNKNOWN"
+          },
+          {
+            "tool": "get_repository",
+            "call_mode": "REST"
+          }
+        ],
+        "executions": [
+          {
+            "tool": "get_repository",
+            "call_mode": "REST",
+            "reason": "REST selected by registry support and execution preference."
+          },
+          {
+            "tool": "list_branches",
+            "call_mode": "MCP",
+            "reason": "Tool is exposed by MCP and selected by execution preference."
+          }
+        ],
+        "missing_required_tools": [
+          "get_branch_protection"
+        ],
+        "all_required_present": false
+      },
+      "trace_id": "2532003c-f1ce-4700-871b-b2c70f238f28"
+    },
+    {
+      "repository": "OTTO-NARUTO/model-context-protocol",
+      "control": "8.28",
+      "control_name": "Secure coding",
+      "status": "FAIL",
+      "why_failed": "Checks run: minimum approvals >= 1 across 5 merged change(s). Failed checks: 5 change(s) below threshold (6, 5, 3, 2, 1).",
+      "api_call": "MCP",
+      "api_call_reason": "search_pull_requests: Tool is exposed by MCP and selected by execution preference. | pull_request_read: Tool is exposed by MCP and selected by execution preference.",
+      "evidence_snapshot": {
+        "total_changes": 5,
+        "reviewed_changes": 0,
+        "review_coverage": 0,
+        "unreviewed_samples": []
+      },
+      "metadata": {
+        "strategy": "review_process",
+        "requirementType": "min_reviews",
+        "requirementField": "approved_reviews_count",
+        "threshold": 1,
+        "totalChecked": 5,
+        "failingItems": [
+          "6",
+          "5",
+          "3",
+          "2",
+          "1"
+        ]
+      },
+      "dependency_status": {
+        "required_tools": [
+          "list_pull_requests"
+        ],
+        "executed_tools": [
+          "search_pull_requests",
+          "pull_request_read"
+        ],
+        "required_tools_with_call_mode": [
+          {
+            "tool": "list_pull_requests",
+            "call_mode": "UNKNOWN"
+          }
+        ],
+        "executions": [
+          {
+            "tool": "search_pull_requests",
+            "call_mode": "MCP",
+            "reason": "Tool is exposed by MCP and selected by execution preference."
+          },
+          {
+            "tool": "pull_request_read",
+            "call_mode": "MCP",
+            "reason": "Tool is exposed by MCP and selected by execution preference."
+          },
+          {
+            "tool": "pull_request_read",
+            "call_mode": "MCP",
+            "reason": "Tool is exposed by MCP and selected by execution preference."
+          },
+          {
+            "tool": "pull_request_read",
+            "call_mode": "MCP",
+            "reason": "Tool is exposed by MCP and selected by execution preference."
+          },
+          {
+            "tool": "pull_request_read",
+            "call_mode": "MCP",
+            "reason": "Tool is exposed by MCP and selected by execution preference."
+          },
+          {
+            "tool": "pull_request_read",
+            "call_mode": "MCP",
+            "reason": "Tool is exposed by MCP and selected by execution preference."
+          }
+        ],
+        "missing_required_tools": [
+          "list_pull_requests"
+        ],
+        "all_required_present": false
+      },
+      "trace_id": "7ef573d1-60da-408c-b114-f686b540eb41"
+    }
+  ],
+  "all_results": [
+    {
+      "repository": "OTTO-NARUTO/model-context-protocol",
+      "control": "8.9",
+      "control_name": "Configuration management",
+      "status": "FAIL",
+      "reason": "Checks run: branch protection on 4 branch(es). Branch protection enabled: Yes. Protected branches: 1. Unprotected critical branches: 3 (8.28, plumbing-issue, update-1).",
+      "evidence_snapshot": {
+        "total_branches": 4,
+        "protected_branches": 1,
+        "unprotected_critical_branches": []
+      },
+      "dependency_status": {
+        "required_tools": [
+          "get_branch_protection",
+          "get_repository"
+        ],
+        "executed_tools": [
+          "get_repository",
+          "list_branches"
+        ],
+        "required_tools_with_call_mode": [
+          {
+            "tool": "get_branch_protection",
+            "call_mode": "UNKNOWN"
+          },
+          {
+            "tool": "get_repository",
+            "call_mode": "REST"
+          }
+        ],
+        "executions": [
+          {
+            "tool": "get_repository",
+            "call_mode": "REST",
+            "reason": "REST selected by registry support and execution preference."
+          },
+          {
+            "tool": "list_branches",
+            "call_mode": "MCP",
+            "reason": "Tool is exposed by MCP and selected by execution preference."
+          }
+        ],
+        "missing_required_tools": [
+          "get_branch_protection"
+        ],
+        "all_required_present": false
+      }
+    },
+    {
+      "repository": "OTTO-NARUTO/model-context-protocol",
+      "control": "8.28",
+      "control_name": "Secure coding",
+      "status": "FAIL",
+      "reason": "Checks run: minimum approvals >= 1 across 5 merged change(s). Failed checks: 5 change(s) below threshold (6, 5, 3, 2, 1).",
+      "evidence_snapshot": {
+        "total_changes": 5,
+        "reviewed_changes": 0,
+        "review_coverage": 0,
+        "unreviewed_samples": []
+      },
+      "dependency_status": {
+        "required_tools": [
+          "list_pull_requests"
+        ],
+        "executed_tools": [
+          "search_pull_requests",
+          "pull_request_read"
+        ],
+        "required_tools_with_call_mode": [
+          {
+            "tool": "list_pull_requests",
+            "call_mode": "UNKNOWN"
+          }
+        ],
+        "executions": [
+          {
+            "tool": "search_pull_requests",
+            "call_mode": "MCP",
+            "reason": "Tool is exposed by MCP and selected by execution preference."
+          },
+          {
+            "tool": "pull_request_read",
+            "call_mode": "MCP",
+            "reason": "Tool is exposed by MCP and selected by execution preference."
+          },
+          {
+            "tool": "pull_request_read",
+            "call_mode": "MCP",
+            "reason": "Tool is exposed by MCP and selected by execution preference."
+          },
+          {
+            "tool": "pull_request_read",
+            "call_mode": "MCP",
+            "reason": "Tool is exposed by MCP and selected by execution preference."
+          },
+          {
+            "tool": "pull_request_read",
+            "call_mode": "MCP",
+            "reason": "Tool is exposed by MCP and selected by execution preference."
+          },
+          {
+            "tool": "pull_request_read",
+            "call_mode": "MCP",
+            "reason": "Tool is exposed by MCP and selected by execution preference."
+          }
+        ],
+        "missing_required_tools": [
+          "list_pull_requests"
+        ],
+        "all_required_present": false
+      }
+    }
+  ]
+}

@@ -25,8 +25,7 @@ const envSchema = z.object({
   GITHUB_API_BASE_URL: z.string().url().default("https://api.github.com"),
   GITLAB_API_BASE_URL: z.string().url().default("https://gitlab.com/api/v4"),
   BITBUCKET_API_BASE_URL: z.string().url().default("https://api.bitbucket.org/2.0"),
-  REST_TOOL_CONTRACTS_PATH: z.string().default("config/rest-tool-contracts.json"),
-  PROVIDER_TOOL_SUPPORT_PATH: z.string().default("config/provider-tool-support.json")
+  REST_TOOL_CONTRACTS_PATH: z.string().default("config/rest-tool-contracts.json")
 });
 
 export const env = envSchema.parse(process.env);

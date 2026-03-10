@@ -1,0 +1,86 @@
+{
+  "report_type": "EVIDENCE_FAILURE_REPORT",
+  "generated_at": "2026-03-09T12:04:36.962Z",
+  "standard": "ISO27001",
+  "provider": "github",
+  "repositories": [
+    "OTTO-NARUTO/model-context-protocol"
+  ],
+  "summary": {
+    "repositories": 1,
+    "total": 2,
+    "pass": 1,
+    "fail": 1,
+    "errors": 0
+  },
+  "total_results": 2,
+  "failed_or_error_count": 1,
+  "failed_controls": [
+    {
+      "repository": "OTTO-NARUTO/model-context-protocol",
+      "control": "8.28",
+      "control_name": "Secure coding",
+      "status": "FAIL",
+      "why_failed": "secure_review_check: Checks run: minimum approvals >= 1 across 5 merged change(s). Failed checks: 5 change(s) below threshold (6, 5, 3, 2, 1).",
+      "api_call": "MCP",
+      "api_call_reason": "secure_review_check: search_pull_requests: MCP selected for 'search_pull_requests' using mapped tool 'search_pull_requests'. | pull_request_read: MCP selected for 'pull_request_read' using mapped tool 'pull_request_read'.",
+      "evidence_snapshot": {
+        "secure_review_check": {
+          "total_changes": 5,
+          "reviewed_changes": 0,
+          "review_coverage": 0,
+          "unreviewed_samples": []
+        }
+      },
+      "metadata": {
+        "secure_review_check": {
+          "strategy": "review_process",
+          "requirementType": "min_reviews",
+          "requirementField": "approved_reviews_count",
+          "threshold": 1,
+          "totalChecked": 5,
+          "failingItems": [
+            "6",
+            "5",
+            "3",
+            "2",
+            "1"
+          ]
+        }
+      },
+      "trace_id": "9b0ee3c4-adba-45dc-8263-e951980a0452"
+    }
+  ],
+  "all_results": [
+    {
+      "repository": "OTTO-NARUTO/model-context-protocol",
+      "control": "8.9",
+      "control_name": "Configuration management",
+      "status": "PASS",
+      "reason": "branch_protection_check: Checks run: branch protection on 4 branch(es). Branch protection enabled: Yes. Protected branches: 1. Unprotected branches: 3. Unprotected critical branches: 0 (none).",
+      "evidence_snapshot": {
+        "branch_protection_check": {
+          "total_branches": 4,
+          "protected_branches": 1,
+          "unprotected_branches": 3,
+          "unprotected_critical_branches": []
+        }
+      }
+    },
+    {
+      "repository": "OTTO-NARUTO/model-context-protocol",
+      "control": "8.28",
+      "control_name": "Secure coding",
+      "status": "FAIL",
+      "reason": "secure_review_check: Checks run: minimum approvals >= 1 across 5 merged change(s). Failed checks: 5 change(s) below threshold (6, 5, 3, 2, 1).",
+      "evidence_snapshot": {
+        "secure_review_check": {
+          "total_changes": 5,
+          "reviewed_changes": 0,
+          "review_coverage": 0,
+          "unreviewed_samples": []
+        }
+      }
+    }
+  ]
+}

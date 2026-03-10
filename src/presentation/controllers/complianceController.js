@@ -1,10 +1,11 @@
-﻿import path from "path";
+import path from "path";
 import { fileURLToPath } from "url";
 import { existsSync, readFileSync } from "fs";
 import { randomUUID } from "crypto";
 import { isProvider } from "../../domain/entities/provider.js";
 import EvaluationEngine from "../../application/services/EvaluationEngine.js";
 import { ReportFormatter } from "../../application/services/reportFormatter.js";
+import { EvidenceReportCollector } from "../../application/services/evidenceReportCollector.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -12,17 +13,17 @@ const projectRoot = path.resolve(__dirname, "../../../");
 
 const evaluationEngine = new EvaluationEngine();
 const reportFormatter = new ReportFormatter();
+const evidenceReportCollector = new EvidenceReportCollector({ projectRoot });
 const ALLOWED_STANDARD = "ISO27001";
-const ALLOWED_CONTROLS = new Set(["8.9", "8.28"]);
-const controlLogicCatalog = buildControlLogicCatalog();
-const isoControlMappings = buildIsoControlMappings();
+const checksCatalog = buildChecksCatalog();
+const frameworkCatalog = buildFrameworkCatalog();
 
 function getMapping(standard) {
   const normalizedStandard = String(standard ?? "").toUpperCase();
   if (normalizedStandard !== ALLOWED_STANDARD) {
     return [];
   }
-  return isoControlMappings;
+  return frameworkCatalog.controls;
 }
 
 function resolveToolNames(mcpTool, provider) {
@@ -44,12 +45,12 @@ function resolveToolNames(mcpTool, provider) {
   return [];
 }
 
-function getControlEntry(controlId) {
-  return getMapping(ALLOWED_STANDARD).find((item) => String(item?.control_id ?? "") === String(controlId));
+function uniq(values) {
+  return [...new Set((Array.isArray(values) ? values : []).map((item) => String(item ?? "").trim()).filter(Boolean))];
 }
 
-function buildControlLogicCatalog() {
-  const filePath = path.join(projectRoot, "compliance", "mcp-tool-mapping", "ISO27001_Repo_Controls.json");
+function buildChecksCatalog() {
+  const filePath = path.join(projectRoot, "compliance", "checks", "checks.json");
   if (!existsSync(filePath)) {
     return {};
   }
@@ -61,24 +62,29 @@ function buildControlLogicCatalog() {
     parsed = null;
   }
 
-  const controls = Array.isArray(parsed?.controls) ? parsed.controls : [];
+  const checks = Array.isArray(parsed?.checks) ? parsed.checks : [];
   const out = {};
-  for (const control of controls) {
-    const controlCode = String(control?.control_code ?? "");
-    if (!ALLOWED_CONTROLS.has(controlCode)) continue;
-    const mapping = Array.isArray(control?.mappings) ? control.mappings[0] : null;
-    const logic = mapping?.logic && typeof mapping.logic === "object" ? mapping.logic : null;
-    if (!logic) continue;
-    out[`${ALLOWED_STANDARD}:${controlCode}`] = logic;
+  for (const check of checks) {
+    const checkId = String(check?.check_id ?? "").trim();
+    if (!checkId) continue;
+    out[checkId] = {
+      check_id: checkId,
+      description: String(check?.description ?? ""),
+      tool: check?.tool,
+      provider_tools: check?.provider_tools ?? {},
+      evaluation_logic: check?.evaluation_logic && typeof check.evaluation_logic === "object"
+        ? check.evaluation_logic
+        : null
+    };
   }
 
   return out;
 }
 
-function buildIsoControlMappings() {
-  const filePath = path.join(projectRoot, "compliance", "mcp-tool-mapping", "ISO27001_Repo_Controls.json");
+function buildFrameworkCatalog() {
+  const filePath = path.join(projectRoot, "compliance", "frameworks", "iso27001_controls.json");
   if (!existsSync(filePath)) {
-    throw new Error(`Mapping file not found at: ${filePath}`);
+    throw new Error(`Framework controls file not found at: ${filePath}`);
   }
 
   let parsed = null;
@@ -91,25 +97,62 @@ function buildIsoControlMappings() {
   const controls = Array.isArray(parsed?.controls) ? parsed.controls : [];
   const out = [];
   for (const control of controls) {
-    const controlId = String(control?.control_code ?? "");
-    if (!ALLOWED_CONTROLS.has(controlId)) continue;
-    const mapping = Array.isArray(control?.mappings) ? control.mappings[0] : null;
-    if (!mapping || typeof mapping !== "object") continue;
+    const controlId = String(control?.control_id ?? "").trim();
+    if (!controlId) continue;
     out.push({
       control_id: controlId,
       control_name: String(control?.control_name ?? ""),
-      evidence_source: String(mapping?.evidence_source ?? ""),
-      mcp_tool: mapping?.tools ?? {}
+      evidence_source: String(control?.evidence_source ?? "code_repo_scan"),
+      checks: Array.isArray(control?.checks)
+        ? control.checks.map((item) => String(item ?? "").trim()).filter(Boolean)
+        : []
     });
   }
-  return out;
+  return {
+    framework: String(parsed?.framework ?? ALLOWED_STANDARD).toUpperCase(),
+    controls: out
+  };
 }
 
-function getControlLogic(controlId, standard) {
-  const normalizedControl = String(controlId ?? "");
-  const normalizedStandard = String(standard ?? "").toUpperCase();
-  const key = `${normalizedStandard}:${normalizedControl}`;
-  return controlLogicCatalog[key] ?? null;
+function getCheckDefinitionById(checkId) {
+  return checksCatalog[String(checkId ?? "").trim()] ?? null;
+}
+
+function resolveCheckTool(checkDefinition, provider) {
+  const definition = checkDefinition && typeof checkDefinition === "object"
+    ? checkDefinition
+    : null;
+  const providerName = String(provider ?? "").toLowerCase();
+
+  // Primary source: transport-aware tool mapping from checks.json.
+  const toolConfig = definition?.tool;
+  if (toolConfig && typeof toolConfig === "object" && !Array.isArray(toolConfig)) {
+    const mcpTools = resolveToolNames(toolConfig?.mcp, providerName);
+    const restTools = resolveToolNames(toolConfig?.rest, providerName);
+    const combined = uniq([...mcpTools, ...restTools]);
+    if (combined.length > 0) {
+      return combined;
+    }
+  }
+
+  // Backward compatibility: direct provider mapping in tool field.
+  if (definition?.tool) {
+    const resolved = resolveToolNames(definition.tool, providerName);
+    if (resolved.length > 0) {
+      return resolved;
+    }
+  }
+
+  // Backward compatibility for older check records.
+  if (definition?.provider_tools && typeof definition.provider_tools === "object") {
+    const byProvider = definition.provider_tools[providerName];
+    const resolved = resolveToolNames(byProvider, providerName);
+    if (resolved.length > 0) {
+      return resolved;
+    }
+  }
+
+  return [];
 }
 
 function normalizeRepoNames(repoName, repoNames) {
@@ -197,10 +240,6 @@ function replaceComplianceTerms(text) {
 }
 
 function buildFailureReason(status, verdict) {
-  if (String(status) !== "FAIL") {
-    return replaceComplianceTerms(verdict?.failReason ?? "");
-  }
-
   const metadata = verdict?.metadata && typeof verdict.metadata === "object"
     ? verdict.metadata
     : {};
@@ -209,12 +248,21 @@ function buildFailureReason(status, verdict) {
   if (strategy === "branch_protection") {
     const totalChecked = Number(metadata?.totalChecked ?? 0);
     const protectedCount = Number(metadata?.protectedCount ?? 0);
+    const unprotectedCount = Number(
+      metadata?.unprotectedCount ??
+      Math.max(0, totalChecked - protectedCount)
+    );
     const failingBranches = Array.isArray(metadata?.failingItems)
       ? metadata.failingItems
       : Array.isArray(metadata?.unprotectedCriticalBranches)
         ? metadata.unprotectedCriticalBranches
         : [];
-    return `Checks run: branch protection on ${totalChecked} branch(es). Failed checks: ${failingBranches.length} unprotected branch(es) (${failingBranches.join(", ") || "unknown"}); protected detected=${protectedCount}.`;
+    const protectionEnabled = protectedCount > 0 ? "Yes" : "No";
+    return `Checks run: branch protection on ${totalChecked} branch(es). Branch protection enabled: ${protectionEnabled}. Protected branches: ${protectedCount}. Unprotected branches: ${unprotectedCount}. Unprotected critical branches: ${failingBranches.length} (${failingBranches.join(", ") || "none"}).`;
+  }
+
+  if (String(status) !== "FAIL") {
+    return replaceComplianceTerms(verdict?.failReason ?? "");
   }
 
   if (strategy === "review_process") {
@@ -252,104 +300,164 @@ function isGithubBranchProtectionPlanError(message) {
   return text.includes("upgrade to github pro") || text.includes("get-branch-protection");
 }
 
+function extractBranchItems(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.items)) return payload.items;
+  if (Array.isArray(payload?.data)) return payload.data;
+  if (Array.isArray(payload?.values)) return payload.values;
+  return [];
+}
+
+function buildControlStatusFromCheckResults(checkResults) {
+  const list = Array.isArray(checkResults) ? checkResults : [];
+  if (list.some((item) => String(item?.status ?? "").toUpperCase() === "FAIL")) return "FAIL";
+  if (list.some((item) => String(item?.status ?? "").toUpperCase() === "ERROR")) return "ERROR";
+  if (list.length > 0 && list.every((item) => String(item?.status ?? "").toUpperCase() === "PASS")) return "PASS";
+  return "UNDETERMINED";
+}
+
+function buildControlReasonFromCheckResults(controlStatus, checkResults) {
+  const list = Array.isArray(checkResults) ? checkResults : [];
+  const selected = controlStatus === "PASS"
+    ? list
+    : list.filter((item) => String(item?.status ?? "").toUpperCase() === controlStatus);
+  const reasons = selected
+    .map((item) => {
+      const checkId = String(item?.check_id ?? "check");
+      const reason = String(item?.reason ?? "").trim();
+      return reason ? `${checkId}: ${reason}` : "";
+    })
+    .filter(Boolean);
+  if (reasons.length > 0) return reasons.join(" | ");
+  return controlStatus === "PASS"
+    ? "All checks passed for this control."
+    : "Control evaluation did not return a clear failure reason.";
+}
+
+function buildCombinedApiCall(checkResults) {
+  const modes = [...new Set(
+    (Array.isArray(checkResults) ? checkResults : [])
+      .map((item) => String(item?.api_call ?? "").trim().toUpperCase())
+      .filter(Boolean)
+  )];
+  return modes.length > 0 ? modes.join("+") : "UNKNOWN";
+}
+
+function buildCombinedApiCallReason(checkResults) {
+  const reasons = (Array.isArray(checkResults) ? checkResults : [])
+    .map((item) => {
+      const checkId = String(item?.check_id ?? "check");
+      const reason = String(item?.api_call_reason ?? "").trim();
+      return reason ? `${checkId}: ${reason}` : "";
+    })
+    .filter(Boolean);
+  return reasons.length > 0 ? reasons.join(" | ") : "Execution metadata unavailable.";
+}
+
+function buildCombinedToolUsed(checkResults) {
+  const tools = (Array.isArray(checkResults) ? checkResults : [])
+    .flatMap((item) => String(item?.tool_used ?? "").split("+"))
+    .map((item) => String(item ?? "").trim())
+    .filter(Boolean);
+  return [...new Set(tools)].join("+");
+}
+
 export class ComplianceController {
   constructor(oauthService, toolExecutionStrategy) {
     this.oauthService = oauthService;
     this.toolExecutionStrategy = toolExecutionStrategy;
   }
 
-  evaluateControl = async (req, res) => {
-    const { controlId, provider, repoName, executionPreference } = req.body ?? {};
-    const [owner, repo] = String(repoName ?? "").split("/");
+  executeControlChecks = async ({ control, provider, owner, repo, token, preference, standard }) => {
+    const checkIds = Array.isArray(control?.checks) ? control.checks : [];
+    if (checkIds.length === 0) {
+      throw new Error(`Control ${control?.control_id} does not define checks.`);
+    }
 
-    try {
-      if (!isProvider(provider)) {
-        res.status(400).json({ error: "Invalid provider." });
-        return;
-      }
-      if (!ALLOWED_CONTROLS.has(String(controlId ?? ""))) {
-        res.status(400).json({ error: "Only ISO27001 controls 8.9, 8.28 are supported." });
-        return;
-      }
-      if (!owner || !repo) {
-        res.status(400).json({ error: "repoName must be in 'owner/repo' format" });
-        return;
+    const checkResults = [];
+    for (const checkId of checkIds) {
+      const check = getCheckDefinitionById(checkId);
+      if (!check) {
+        throw new Error(`Check '${checkId}' is not defined in checks.json.`);
       }
 
-      const tenantId = req.tenantId;
-      const plan = getControlEntry(controlId);
-      if (!plan) {
-        res.status(404).json({ error: `Control ${controlId} not found in ISO27001 mapping.` });
-        return;
-      }
-
-      const toolNames = resolveToolNames(plan.mcp_tool, provider);
+      const toolNames = resolveCheckTool(check, provider);
       if (toolNames.length === 0) {
-        res.status(400).json({ error: `No ${provider} tool mapped for control ${controlId}.` });
-        return;
+        throw new Error(`No ${provider} tool mapped for check '${checkId}'.`);
       }
 
-      const token = await this.oauthService.getAccessToken(provider, tenantId);
       const collected = await this.collectEvidence({
         toolNames,
         owner,
         repo,
-        controlId,
+        controlId: control.control_id,
         provider,
         token,
-        preference: normalizePreference(executionPreference)
+        preference
       });
 
-      const evaluatedAt = new Date().toISOString();
-      const evidencePayload = collected.evidencePayload;
-      const verdict = evaluationEngine.evaluate(controlId, evidencePayload, {
-        controlId,
-        controlName: plan.control_name,
-        evidenceSource: plan.evidence_source,
+      const verdict = evaluationEngine.evaluate(control.control_id, collected.evidencePayload, {
+        controlId: control.control_id,
+        controlName: control.control_name,
+        evidenceSource: control.evidence_source,
         toolName: collected.toolUsed,
         provider,
-        logic: getControlLogic(controlId, ALLOWED_STANDARD)
+        logic: check.evaluation_logic,
+        standard
       });
       const status = toPublicStatus(verdict.status);
-      const passed = toPassed(status, verdict.passed);
       const reason = buildFailureReason(status, verdict);
 
-      res.json({
-        control: controlId,
-        evaluated_at: evaluatedAt,
-        description: plan.control_name,
+      checkResults.push({
+        check_id: check.check_id,
+        check_description: check.description,
+        status,
+        reason,
         answer: replaceComplianceTerms(verdict.answer),
-        passed,
-        evidence_source: plan.evidence_source,
+        findings: replaceComplianceTerms(verdict.findings),
+        evidence_snapshot: verdict.evidenceSnapshot,
+        metadata: verdict.metadata,
+        evidence: collected.evidencePayload,
         tool_used: collected.toolUsed,
         api_call: collected.apiCall,
         api_call_reason: collected.apiCallReason,
-        status,
-        fail_reason: reason,
-        evidence_snapshot: verdict.evidenceSnapshot,
-        findings: replaceComplianceTerms(verdict.findings),
-        metadata: verdict.metadata,
-        evidence: evidencePayload,
-        traceId: collected.traceId,
-        report: reportFormatter.formatControlReport({
-          repository: repoName,
-          control: controlId,
-          description: plan.control_name,
-          status,
-          passed,
-          fail_reason: reason,
-          evaluated_at: evaluatedAt,
-          evidence_source: plan.evidence_source,
-          tool_used: collected.toolUsed,
-          api_call: collected.apiCall,
-          api_call_reason: collected.apiCallReason
-        })
+        traceId: collected.traceId ?? randomUUID()
       });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Evaluation failed.";
-      const code = message.includes("No OAuth token found") ? 401 : 400;
-      res.status(code).json({ error: message });
     }
+
+    const status = buildControlStatusFromCheckResults(checkResults);
+    const reason = buildControlReasonFromCheckResults(status, checkResults);
+    const passed = toPassed(status, null);
+    const apiCall = buildCombinedApiCall(checkResults);
+    const apiCallReason = buildCombinedApiCallReason(checkResults);
+    const toolUsed = buildCombinedToolUsed(checkResults);
+    const evidenceSnapshot = Object.fromEntries(checkResults.map((item) => [item.check_id, item.evidence_snapshot]));
+    const metadata = Object.fromEntries(checkResults.map((item) => [item.check_id, item.metadata]));
+    const evidence = Object.fromEntries(checkResults.map((item) => [item.check_id, item.evidence]));
+    const findings = checkResults.map((item) => `${item.check_id}: ${item.findings}`).join(" | ");
+    const answer = checkResults.map((item) => `${item.check_id}: ${item.answer}`).join(" | ");
+
+    return {
+      status,
+      passed,
+      reason,
+      answer,
+      findings,
+      apiCall,
+      apiCallReason,
+      toolUsed,
+      evidenceSnapshot,
+      metadata,
+      evidence,
+      check_results: checkResults,
+      traceId: checkResults[0]?.traceId ?? randomUUID()
+    };
+  };
+
+  evaluateControl = async (req, res) => {
+    res.status(400).json({
+      error: "Single-control evaluation is disabled. Use /api/compliance/evaluate-standard with standard='ISO27001'."
+    });
   };
 
   evaluateStandard = async (req, res) => {
@@ -380,8 +488,8 @@ export class ComplianceController {
         return;
       }
 
-      const mappings = getMapping(normalizedStandard);
-      if (mappings.length === 0) {
+      const controls = getMapping(normalizedStandard);
+      if (controls.length === 0) {
         res.status(404).json({ error: `No repo-related controls found for ${normalizedStandard}` });
         return;
       }
@@ -393,52 +501,36 @@ export class ComplianceController {
       for (const fullRepoName of normalizedRepos) {
         const { owner, repo } = parseRepoCoordinates(fullRepoName);
 
-        for (const item of mappings) {
+        for (const item of controls) {
           try {
-            const toolNames = resolveToolNames(item.mcp_tool, provider);
-            if (toolNames.length === 0) {
-              throw new Error(`No ${provider} tool mapped for control ${item.control_id}.`);
-            }
-
-            const collected = await this.collectEvidence({
-              toolNames,
+            const controlExecution = await this.executeControlChecks({
+              control: item,
+              standard: normalizedStandard,
+              provider,
               owner,
               repo,
-              controlId: item.control_id,
-              provider,
               token,
               preference: normalizePreference(executionPreference)
             });
-            const evidencePayload = collected.evidencePayload;
-            const verdict = evaluationEngine.evaluate(item.control_id, evidencePayload, {
-              controlId: item.control_id,
-              controlName: item.control_name,
-              evidenceSource: item.evidence_source,
-              toolName: collected.toolUsed,
-              provider,
-              logic: getControlLogic(item.control_id, normalizedStandard)
-            });
-            const status = toPublicStatus(verdict.status);
-            const passed = toPassed(status, verdict.passed);
-            const reason = buildFailureReason(status, verdict);
 
             results.push({
               repository: fullRepoName,
               evaluated_at: new Date().toISOString(),
               control: item.control_id,
               description: item.control_name,
-              answer: replaceComplianceTerms(verdict.answer),
-              passed,
+              answer: controlExecution.answer,
+              passed: controlExecution.passed,
               evidence_source: item.evidence_source,
-              tool_used: collected.toolUsed,
-              api_call: collected.apiCall,
-              api_call_reason: collected.apiCallReason,
-              status,
-              fail_reason: reason,
-              evidence_snapshot: verdict.evidenceSnapshot,
-              findings: replaceComplianceTerms(verdict.findings),
-              metadata: verdict.metadata,
-              traceId: collected.traceId ?? randomUUID()
+              tool_used: controlExecution.toolUsed,
+              api_call: controlExecution.apiCall,
+              api_call_reason: controlExecution.apiCallReason,
+              status: controlExecution.status,
+              fail_reason: controlExecution.reason,
+              evidence_snapshot: controlExecution.evidenceSnapshot,
+              findings: controlExecution.findings,
+              metadata: controlExecution.metadata,
+              check_results: controlExecution.check_results,
+              traceId: controlExecution.traceId ?? randomUUID()
             });
           } catch (error) {
             const message = error instanceof Error ? error.message : "Evaluation failed.";
@@ -450,7 +542,7 @@ export class ComplianceController {
               answer: "Unable to determine due to evaluation error.",
               passed: null,
               evidence_source: item.evidence_source,
-              tool_used: resolveToolNames(item.mcp_tool, provider).join("+"),
+              tool_used: "",
               api_call: "UNKNOWN",
               api_call_reason: "Evaluation failed before execution mode could be resolved.",
               status: "ERROR",
@@ -463,19 +555,28 @@ export class ComplianceController {
         }
       }
 
+      const summary = {
+        repositories: normalizedRepos.length,
+        total: results.length,
+        pass: results.filter((item) => item.status === "PASS").length,
+        fail: results.filter((item) => item.status === "FAIL").length,
+        errors: results.filter((item) => item.status === "ERROR").length
+      };
+
       res.json({
         standard: normalizedStandard,
         repository: normalizedRepos.length === 1 ? normalizedRepos[0] : undefined,
         repositories: normalizedRepos,
         timestamp: new Date().toISOString(),
-        summary: {
-          repositories: normalizedRepos.length,
-          total: results.length,
-          pass: results.filter((item) => item.status === "PASS").length,
-          fail: results.filter((item) => item.status === "FAIL").length,
-          errors: results.filter((item) => item.status === "ERROR").length
-        },
+        summary,
         results,
+        evidence_report: await evidenceReportCollector.collectStandardEvaluation({
+          standard: normalizedStandard,
+          provider,
+          repositories: normalizedRepos,
+          results,
+          summary
+        }),
         report: reportFormatter.formatStandardReport(results)
       });
     } catch (error) {
@@ -500,6 +601,26 @@ export class ComplianceController {
       res.json({ provider, tools });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Tool discovery failed.";
+      const code = message.includes("No OAuth token found") ? 401 : 500;
+      res.status(code).json({ error: message });
+    }
+  };
+
+  debugMcpTools = async (req, res) => {
+    const provider = String(req.params.provider ?? "");
+
+    try {
+      if (!isProvider(provider)) {
+        res.status(400).json({ error: "Invalid provider." });
+        return;
+      }
+
+      const tenantId = req.tenantId;
+      const token = await this.oauthService.getAccessToken(provider, tenantId);
+      const tools = await this.toolExecutionStrategy.listMcpToolNames(provider, token);
+      res.json({ provider, mcp_tools: tools });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "MCP tool discovery failed.";
       const code = message.includes("No OAuth token found") ? 401 : 500;
       res.status(code).json({ error: message });
     }
@@ -539,39 +660,146 @@ export class ComplianceController {
         }
       }
 
+      const executionEntries = [];
+      if (repositoryEvidence) {
+        executionEntries.push({
+          toolName: "get_repository",
+          executionMode: repositoryEvidence?.executionMode,
+          reason: repositoryEvidence?.resolution?.reason
+        });
+      }
+
+      // Primary source for branch counts/protected counts.
+      let branchesEvidence = null;
+      try {
+        branchesEvidence = await this.toolExecutionStrategy.executeTool({
+          provider,
+          toolName: "list_branches",
+          params: { owner, repo },
+          token,
+          preference
+        });
+      } catch {
+        branchesEvidence = null;
+      }
+
+      if (branchesEvidence) {
+        const branchesPayload = extractEvidencePayload(branchesEvidence);
+        const branchItems = extractBranchItems(branchesPayload).map((branch) => ({
+          ...(branch && typeof branch === "object" ? branch : {}),
+          name: String(branch?.name ?? branch?.displayId ?? branch?.branch ?? "unknown"),
+          branch_protection_enabled: Boolean(
+            branch?.branch_protection_enabled ??
+            branch?.protected ??
+            branch?.is_protected ??
+            branch?.protection?.enabled
+          )
+        }));
+
+        executionEntries.push({
+          toolName: "list_branches",
+          executionMode: branchesEvidence?.executionMode,
+          reason: branchesEvidence?.resolution?.reason
+        });
+
+        // Some providers return branch names without explicit protection flags.
+        const hasAnyProtectionSignal = branchItems.some((branch) => (
+          branch?.branch_protection_enabled === true ||
+          branch?.protected === true ||
+          branch?.is_protected === true
+        ));
+        if (!hasAnyProtectionSignal && branchItems.length > 0) {
+          const defaultBranch = String(
+            repositoryEvidence?.raw?.default_branch ??
+            repositoryEvidence?.standardized?.default_branch ??
+            repositoryEvidence?.result?.default_branch ??
+            repositoryEvidence?.default_branch ??
+            (branchItems.find((item) => String(item?.name ?? "").toLowerCase() === "main")?.name ??
+              branchItems.find((item) => String(item?.name ?? "").toLowerCase() === "master")?.name ??
+              branchItems[0]?.name ??
+              "main")
+          );
+          try {
+            const protectionEvidence = await this.toolExecutionStrategy.executeTool({
+              provider,
+              toolName: "get_branch_protection",
+              params: { owner, repo, branch: defaultBranch },
+              token,
+              preference
+            });
+            executionEntries.push({
+              toolName: "get_branch_protection",
+              executionMode: protectionEvidence?.executionMode,
+              reason: protectionEvidence?.resolution?.reason
+            });
+
+            const index = branchItems.findIndex((item) => String(item?.name ?? "").toLowerCase() === defaultBranch.toLowerCase());
+            if (index >= 0) {
+              branchItems[index] = {
+                ...branchItems[index],
+                branch_protection_enabled: true
+              };
+            } else {
+              branchItems.push({
+                name: defaultBranch,
+                branch: defaultBranch,
+                branch_protection_enabled: true
+              });
+            }
+          } catch {
+            // Keep list_branches evidence as-is when direct protection lookup is unavailable.
+          }
+        }
+
+        return {
+          toolUsed: repositoryEvidence
+            ? "get_repository+list_branches"
+            : "list_branches",
+          traceId: branchesEvidence?.traceId ?? repositoryEvidence?.traceId ?? randomUUID(),
+          evidencePayload: branchItems,
+          executions: executionEntries.filter(Boolean),
+          ...summarizeExecution(executionEntries)
+        };
+      }
+
+      // Fallback: if list_branches is unavailable, inspect the default/main branch directly.
+      const defaultBranch = String(
+        repositoryEvidence?.raw?.default_branch ??
+        repositoryEvidence?.standardized?.default_branch ??
+        repositoryEvidence?.result?.default_branch ??
+        repositoryEvidence?.default_branch ??
+        "main"
+      );
       try {
         const protectionEvidence = await this.toolExecutionStrategy.executeTool({
           provider,
           toolName: "get_branch_protection",
-          params: { owner, repo, branch: "main" },
+          params: { owner, repo, branch: defaultBranch },
           token,
           preference
         });
         const protectionPayload = extractEvidencePayload(protectionEvidence);
-        const normalizedProtectionPayload = {
+        const normalizedProtectionPayload = [{
           ...(protectionPayload && typeof protectionPayload === "object" ? protectionPayload : {}),
-          name: String(protectionPayload?.name ?? "main"),
-          branch: String(protectionPayload?.branch ?? "main"),
+          name: String(protectionPayload?.name ?? defaultBranch),
+          branch: String(protectionPayload?.branch ?? defaultBranch),
           branch_protection_enabled: true
-        };
+        }];
+
+        executionEntries.push({
+          toolName: "get_branch_protection",
+          executionMode: protectionEvidence?.executionMode,
+          reason: protectionEvidence?.resolution?.reason
+        });
+
         return {
-          toolUsed: repositoryEvidence ? "get_repository+get_branch_protection" : "get_branch_protection",
+          toolUsed: repositoryEvidence
+            ? "get_repository+get_branch_protection(fallback)"
+            : "get_branch_protection(fallback)",
           traceId: protectionEvidence?.traceId ?? repositoryEvidence?.traceId ?? randomUUID(),
           evidencePayload: normalizedProtectionPayload,
-          ...summarizeExecution([
-            repositoryEvidence
-              ? {
-                toolName: "get_repository",
-                executionMode: repositoryEvidence?.executionMode,
-                reason: repositoryEvidence?.resolution?.reason
-              }
-              : null,
-            {
-              toolName: "get_branch_protection",
-              executionMode: protectionEvidence?.executionMode,
-              reason: protectionEvidence?.resolution?.reason
-            }
-          ])
+          executions: executionEntries.filter(Boolean),
+          ...summarizeExecution(executionEntries)
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error ?? "");
@@ -579,36 +807,7 @@ export class ComplianceController {
           throw error;
         }
 
-        // GitHub may block branch-protection API on some plans/private repos; fall back to list_branches.
-        const branchesEvidence = await this.toolExecutionStrategy.executeTool({
-          provider,
-          toolName: "list_branches",
-          params: { owner, repo },
-          token,
-          preference
-        });
-
-        return {
-          toolUsed: repositoryEvidence
-            ? "get_repository+list_branches(fallback)"
-            : "list_branches(fallback)",
-          traceId: branchesEvidence?.traceId ?? repositoryEvidence?.traceId ?? randomUUID(),
-          evidencePayload: extractEvidencePayload(branchesEvidence),
-          ...summarizeExecution([
-            repositoryEvidence
-              ? {
-                toolName: "get_repository",
-                executionMode: repositoryEvidence?.executionMode,
-                reason: repositoryEvidence?.resolution?.reason
-              }
-              : null,
-            {
-              toolName: "list_branches",
-              executionMode: branchesEvidence?.executionMode,
-              reason: branchesEvidence?.resolution?.reason
-            }
-          ])
-        };
+        throw new Error("Unable to evaluate branch protection: neither list_branches nor get_branch_protection returned usable evidence.");
       }
     }
 
@@ -635,6 +834,11 @@ export class ComplianceController {
       toolUsed: results.map((item) => item.name).join("+"),
       traceId: primary.evidence?.traceId ?? randomUUID(),
       evidencePayload: extractEvidencePayload(primary.evidence),
+      executions: results.map((item) => ({
+        toolName: item?.name,
+        executionMode: item?.evidence?.executionMode,
+        reason: item?.evidence?.resolution?.reason
+      })),
       ...summarizeExecution(results.map((item) => ({
         toolName: item?.name,
         executionMode: item?.evidence?.executionMode,
@@ -727,6 +931,7 @@ export class ComplianceController {
         merged_pr_count: pullRequests.length,
         zero_merged_policy: zeroMergedPolicy
       },
+      executions: executionEntries.filter(Boolean),
       ...summarizeExecution(executionEntries)
     };
   };
@@ -793,3 +998,4 @@ export class ComplianceController {
     return [];
   };
 }
+

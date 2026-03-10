@@ -1,0 +1,44 @@
+sequenceDiagram
+    autonumber
+    participant UI as Client/UI
+    participant API as ComplianceController
+    participant ISO as iso27001_controls.json
+    participant CHK as checks.json
+    participant OAUTH as OAuthService
+    participant STR as ToolExecutionStrategy
+    participant MCP as McpClient
+    participant RES as ToolResolver
+    participant REST as RestToolFallbackClient
+    participant EVAL as EvaluationEngine
+
+    UI->>API: POST /api/compliance/evaluate { controlId: "8.28", provider: "github", repoName }
+    API->>ISO: Load control 8.28
+    ISO-->>API: checks = ["secure_review_check"]
+    API->>CHK: Load check definition
+    CHK-->>API: tool.mcp.github + tool.rest.github + evaluation_logic(min_reviews)
+
+    API->>OAUTH: getAccessToken("github", tenantId)
+    OAUTH-->>API: access token
+
+    loop For each candidate tool needed by secure_review_check
+        API->>STR: executeTool(provider, toolName, params, preference)
+        STR->>MCP: listTools(provider)  // live MCP exposure
+        MCP-->>STR: mcpExposedTools[]
+        STR->>RES: resolve(provider, toolName, mcpExposedTools, preference)
+        RES->>CHK: Read check tool map (mcp/rest for github)
+        CHK-->>RES: mapped mcp/rest tool names
+
+        alt MCP tool is mapped and exposed
+            STR->>MCP: callTool(mapped mcp tool, params)
+            MCP-->>STR: evidence payload
+        else REST fallback is mapped
+            STR->>REST: callTool(mapped rest tool, params)
+            REST-->>STR: evidence payload
+        else No executable strategy
+            STR-->>API: error (mode = none)
+        end
+    end
+
+    API->>EVAL: evaluate(controlId=8.28, evidence, logic=min_reviews)
+    EVAL-->>API: status + findings + metadata
+    API-->>UI: control result (PASS/FAIL/UNDETERMINED, api_call, reasons)

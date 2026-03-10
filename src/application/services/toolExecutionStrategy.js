@@ -18,20 +18,24 @@ export class ToolExecutionStrategy {
     });
 
     if (decision.mode === "mcp") {
-      const evidence = await this.mcpClient.callTool(provider, toolName, params, token);
+      const evidence = await this.mcpClient.callTool(provider, decision.mcpToolName, params, token);
       return {
         ...this.normalizeEvidence(evidence),
         executionMode: "mcp",
-        resolution: decision
+        resolution: decision,
+        requestedToolName: toolName,
+        executedToolName: decision.mcpToolName
       };
     }
 
     if (decision.mode === "rest") {
-      const evidence = await this.restClient.callTool(provider, toolName, params, token);
+      const evidence = await this.restClient.callTool(provider, decision.restToolName, params, token);
       return {
         ...this.normalizeEvidence(evidence),
         executionMode: "rest",
-        resolution: decision
+        resolution: decision,
+        requestedToolName: toolName,
+        executedToolName: decision.restToolName
       };
     }
 
@@ -39,29 +43,32 @@ export class ToolExecutionStrategy {
   }
 
   async listTools(provider, token) {
-    const [mcpToolNames, registryTools, restTools] = await Promise.all([
+    const [mcpToolNames, providerTools, restContractTools] = await Promise.all([
       this.listMcpToolNames(provider, token),
       Promise.resolve(this.toolResolver.listProviderTools(provider)),
       Promise.resolve(this.restClient.listTools(provider).map((item) => String(item?.name ?? "")))
     ]);
 
     const mcpSet = new Set(mcpToolNames);
-    const registryMcpSet = new Set(registryTools.mcp);
-    const restSet = new Set([...registryTools.rest, ...restTools]);
-    const all = [...new Set([...registryTools.all, ...mcpToolNames, ...restTools])];
+    const restContractSet = new Set(restContractTools);
+    const all = providerTools.all;
 
     return all.map((toolName) => {
+      const mapping = providerTools.mappingByTool?.[toolName] ?? { mcpToolName: "", restToolName: "" };
       const decision = this.toolResolver.resolve({
         provider,
         toolName,
         mcpExposedTools: mcpToolNames,
         preference: "prefer_mcp"
       });
+
       return {
         name: toolName,
-        mcp_exposed: mcpSet.has(toolName),
-        mcp_supported_in_registry: registryMcpSet.has(toolName),
-        rest_supported: restSet.has(toolName),
+        mcp_tool_name: mapping.mcpToolName,
+        rest_tool_name: mapping.restToolName,
+        mcp_exposed: Boolean(mapping.mcpToolName) && mcpSet.has(mapping.mcpToolName),
+        mcp_mapped: Boolean(mapping.mcpToolName),
+        rest_supported: Boolean(mapping.restToolName) || restContractSet.has(mapping.restToolName),
         selected_mode: decision.mode,
         reason: decision.reason
       };

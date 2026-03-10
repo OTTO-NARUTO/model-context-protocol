@@ -1,18 +1,23 @@
 sequenceDiagram
 autonumber
 
-box rgb(230, 244, 255) Us
+box rgb(230, 244, 255) Backend
 participant FE as Browser UI
 participant API as Backend API
 participant CC as ComplianceController
 participant OS as OAuthService
+participant FC as framework-controls.json
+participant CHK as checks.json
 participant STR as ToolExecutionStrategy
 participant RES as ToolResolver
+participant MAP as tool-name-mapping.json
 participant MCP as Backend McpClient
 participant RFC as REST Fallback Client
+participant RTC as rest-tool-contracts.json
 participant RN as ResponseNormalizer
 participant EE as EvaluationEngine
 participant RF as ReportFormatter
+participant ERC as EvidenceReportCollector
 end
 
 box rgb(255, 247, 230) Client
@@ -27,12 +32,12 @@ end
 
 participant PRA as Provider REST APIs
 
-Note over FE: Browser opens dashboard and starts provider connect
+Note over FE: Browser connects provider (OAuth)
 FE->>API: GET /api/auth/{provider}/connect
 API-->>FE: Redirect to provider authorization URL
 FE->>OP: Authorize app access
 OP-->>API: Callback with code/state
-API->>OS: Exchange code and store access token
+API->>OS: Exchange code and store token
 OS-->>API: Token stored
 
 Note over FE: Browser starts compliance run
@@ -40,42 +45,59 @@ FE->>API: POST /api/compliance/evaluate-standard
 API->>CC: evaluateStandard(request)
 CC->>OS: getAccessToken(provider, tenant)
 OS-->>CC: Access token
+CC->>FC: Load controls for ISO27001
+FC-->>CC: control_id + check_ids
+CC->>CHK: Load checks by check_id
+CHK-->>CC: canonical tool + evaluation_logic
 
-loop each selected repository and mapped control
-  CC->>STR: executeTool(provider, toolName, params)
-  STR->>MCP: listTools(provider)
-  STR->>RES: resolve(provider, toolName, mcpExposedTools, preference)
-  RES-->>STR: mode = mcp or rest
+loop each repository and control
+  loop each check in control
+    CC->>STR: executeTool(provider, canonicalToolName, params)
+    STR->>MCP: listTools(provider)
+    MCP-->>STR: mcpExposedTools
 
-  alt mode = mcp
-    MCP->>MCP: Resolve provider MCP URL
-    alt provider = github
-      MCP->>GHM: JSON-RPC tools/call
-      GHM-->>MCP: Raw MCP evidence
-    else provider = gitlab
-      MCP->>GLM: JSON-RPC tools/call
-      GLM-->>MCP: Raw MCP evidence
-    else provider = bitbucket
-      MCP->>BBM: JSON-RPC tools/call
-      BBM-->>MCP: Raw MCP evidence
+    STR->>RES: resolve(provider, canonicalToolName, mcpExposedTools, preference)
+    RES->>MAP: read provider mapping for canonical tool
+    MAP-->>RES: mcpToolName + restToolName
+    RES-->>STR: selected mode + mapped tool name
+
+    alt mode = mcp
+      STR->>MCP: callTool(provider, mapped mcpToolName, params)
+      alt provider = github
+        MCP->>GHM: JSON-RPC tools/call
+        GHM-->>MCP: Raw MCP evidence
+      else provider = gitlab
+        MCP->>GLM: JSON-RPC tools/call
+        GLM-->>MCP: Raw MCP evidence
+      else provider = bitbucket
+        MCP->>BBM: JSON-RPC tools/call
+        BBM-->>MCP: Raw MCP evidence
+      end
+      MCP-->>STR: Evidence payload
+    else mode = rest
+      STR->>RFC: callTool(provider, mapped restToolName, params)
+      RFC->>RTC: load rest tool contract
+      RTC-->>RFC: method + path + query + body template
+      RFC->>PRA: Execute provider REST request
+      PRA-->>RFC: Raw REST evidence
+      RFC-->>STR: Evidence payload
     end
-    MCP-->>STR: Evidence payload
-  else mode = rest fallback
-    STR->>RFC: callTool(provider, toolName, params)
-    RFC->>PRA: Provider REST request
-    PRA-->>RFC: REST evidence payload
-    RFC-->>STR: Evidence payload
+
+    STR->>RN: normalizeEvidence(payload)
+    RN-->>STR: Standardized evidence
+    STR-->>CC: Evidence + execution metadata
+
+    CC->>EE: evaluate(check logic, evidence)
+    EE-->>CC: Check verdict
   end
 
-  STR->>RN: normalizeEvidence(payload)
-  RN-->>STR: Standardized evidence
-  STR-->>CC: Collected evidence
-  CC->>EE: evaluate(requirement, evidence)
-  EE-->>CC: Verdict
-  CC->>RF: formatControlResult(verdict)
-  RF-->>CC: Report row
+  CC->>CC: Aggregate check verdicts to control PASS/FAIL/ERROR
 end
 
-CC-->>API: Final compliance report
-API-->>FE: JSON response
-Note over FE: Render test report table
+CC->>RF: format report block
+RF-->>CC: Formatted report section
+CC->>ERC: collect and write evidence report JSON
+ERC-->>CC: file_name + download_url
+CC-->>API: Final compliance result
+API-->>FE: JSON response + evidence_report link
+Note over FE: UI renders results table and report link

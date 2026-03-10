@@ -38,6 +38,22 @@ export function buildApp(container) {
   app.use("/api/auth", buildAuthRoutes(container.authController));
   app.use("/api/compliance", buildComplianceRoutes(container.complianceController));
 
+  const evidenceReportsPath = path.resolve(__dirname, "../evidence-collector/reports");
+  app.use(
+    "/downloads/evidence-reports",
+    express.static(evidenceReportsPath, {
+      etag: false,
+      lastModified: false,
+      maxAge: 0,
+      setHeaders: (res) => {
+        res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+        res.setHeader("Pragma", "no-cache");
+        res.setHeader("Expires", "0");
+        res.setHeader("Content-Type", "application/json; charset=utf-8");
+      }
+    })
+  );
+
   const publicPath = path.resolve(__dirname, "../public");
   app.use(
     express.static(publicPath, {
