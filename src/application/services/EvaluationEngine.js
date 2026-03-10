@@ -179,6 +179,17 @@ export default class EvaluationEngine {
       .map((item) => String(item?.name ?? item?.displayId ?? item?.branch ?? "unknown"))
       .slice(0, 10);
     const pass = failing.length === 0;
+    const protectedCount = branches.filter((item) => this._hasProtectionSignals(item)).length;
+    const unprotectedCount = Math.max(0, branches.length - protectedCount);
+    const scopeChecked = scope.length;
+    const unprotectedCriticalBranches = scope
+      .filter((item) => {
+        const name = String(item?.name ?? item?.displayId ?? item?.branch ?? "").toLowerCase();
+        const isCritical = ["main", "master", "prod", "production", "release", "develop"].some((marker) => name.includes(marker));
+        return isCritical && !this._hasProtectionSignals(item);
+      })
+      .map((item) => String(item?.name ?? item?.displayId ?? item?.branch ?? "unknown"))
+      .slice(0, 10);
 
     return {
       status: pass ? "COMPLIANT" : "NON_COMPLIANT",
@@ -192,8 +203,12 @@ export default class EvaluationEngine {
         strategy: "branch_protection",
         requirementType: "all_must_be_true",
         requirementField: field,
-        totalChecked: scope.length,
-        failingItems: failing
+        totalChecked: branches.length,
+        scopeChecked,
+        protectedCount,
+        unprotectedCount,
+        failingItems: failing,
+        unprotectedCriticalBranches
       }
     };
   }
@@ -332,6 +347,7 @@ export default class EvaluationEngine {
       const name = String(branch?.name ?? branch?.displayId ?? branch?.branch ?? "").toLowerCase();
       return ["main", "master", "prod", "production", "release"].some((marker) => name.includes(marker));
     });
+    const unprotectedCount = Math.max(0, branches.length - protectedBranches.length);
     const pass = protectedBranches.length > 0;
 
     return {
@@ -347,6 +363,7 @@ export default class EvaluationEngine {
         controlId: controlIdFrom(context),
         totalChecked: branches.length,
         protectedCount: protectedBranches.length,
+        unprotectedCount,
         criticalProtectedCount: criticalBranches.length,
         unprotectedCriticalBranches
       }
@@ -1012,10 +1029,11 @@ export default class EvaluationEngine {
     if (strategy === "branch_protection") {
       const totalChecked = Number(metadata?.totalChecked ?? 0);
       const protectedCount = Number(metadata?.protectedCount ?? 0);
+      const unprotectedCount = Number(metadata?.unprotectedCount ?? Math.max(0, totalChecked - protectedCount));
       const criticalMissing = Array.isArray(metadata?.unprotectedCriticalBranches)
         ? metadata.unprotectedCriticalBranches.length
         : 0;
-      return `checked_branches=${totalChecked}, protected_branches=${protectedCount}, unprotected_critical=${criticalMissing}`;
+      return `checked_branches=${totalChecked}, protected_branches=${protectedCount}, unprotected_branches=${unprotectedCount}, unprotected_critical=${criticalMissing}`;
     }
 
     if (strategy === "review_process") {
@@ -1069,6 +1087,13 @@ export default class EvaluationEngine {
       return {
         total_branches: Number(metadata?.totalChecked ?? items.length ?? 0),
         protected_branches: Number(metadata?.protectedCount ?? 0),
+        unprotected_branches: Number(
+          metadata?.unprotectedCount ??
+          Math.max(
+            0,
+            Number(metadata?.totalChecked ?? items.length ?? 0) - Number(metadata?.protectedCount ?? 0)
+          )
+        ),
         unprotected_critical_branches: Array.isArray(metadata?.unprotectedCriticalBranches)
           ? metadata.unprotectedCriticalBranches
           : []

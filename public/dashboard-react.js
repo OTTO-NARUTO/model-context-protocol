@@ -5,7 +5,6 @@ const {
   Button,
   Card,
   CardContent,
-  Checkbox,
   Chip,
   CircularProgress,
   Container,
@@ -80,7 +79,7 @@ const theme = createTheme({
     },
   },
   typography: {
-    fontFamily: "'Roboto', 'Helvetica', 'Arial', sans-serif",
+    fontFamily: "'Roboto', 'Helvetica', 'Arial', sans-serif, 'Material Icons'",
     h4: {
       fontWeight: 700,
       fontSize: "2.125rem",
@@ -191,7 +190,7 @@ function statusChip(status, detailText) {
 
 function getHumanReadableReason(item) {
   const text = String(item?.fail_reason || item?.findings || item?.answer || "").trim();
-  if (text) return text;
+  if (text) return humanizeReasonText(text);
 
   const status = String(item?.status || "UNDETERMINED").toUpperCase();
   if (status === "PASS") return "Control passed based on the available repository evidence.";
@@ -202,8 +201,109 @@ function getHumanReadableReason(item) {
 
 function getApiCallSummary(item) {
   const mode = String(item?.api_call || "").trim().toUpperCase() || "UNKNOWN";
-  const reason = String(item?.api_call_reason || "").trim();
-  return reason ? `${mode}: ${reason}` : mode;
+  const modeLabel = toHumanApiMode(mode);
+  const reason = humanizeApiCallReason(item?.api_call_reason);
+  return reason ? `${modeLabel}. ${reason}` : modeLabel;
+}
+
+function getCheckStatusCounts(item) {
+  const checks = Array.isArray(item?.check_results) ? item.check_results : [];
+  if (checks.length === 0) {
+    const status = String(item?.status ?? "").toUpperCase();
+    return {
+      pass: status === "PASS" ? 1 : 0,
+      fail: status === "FAIL" || status === "ERROR" ? 1 : 0,
+      total: status ? 1 : 0
+    };
+  }
+
+  let pass = 0;
+  let fail = 0;
+  for (const check of checks) {
+    const status = String(check?.status ?? "").toUpperCase();
+    if (status === "PASS") pass += 1;
+    if (status === "FAIL" || status === "ERROR") fail += 1;
+  }
+  return { pass, fail, total: checks.length };
+}
+
+function ChecksPie({ item }) {
+  const counts = getCheckStatusCounts(item);
+  const totalForChart = Math.max(1, counts.pass + counts.fail);
+  const passDeg = Math.round((counts.pass / totalForChart) * 360);
+  const centerLabel = counts.fail === 0
+    ? `${counts.pass}/${counts.total}`
+    : counts.pass === 0
+      ? `${counts.fail}/${counts.total}`
+      : `${counts.pass}/${counts.fail}`;
+
+  return (
+    <Stack direction="row" spacing={1} alignItems="center" justifyContent="center">
+      <Box
+        sx={{
+          width: 36,
+          height: 36,
+          borderRadius: "50%",
+          background: `conic-gradient(#2e7d32 0deg ${passDeg}deg, #d32f2f ${passDeg}deg 360deg)`,
+          position: "relative"
+        }}
+      >
+        <Box
+          sx={{
+            position: "absolute",
+            inset: "5px",
+            borderRadius: "50%",
+            bgcolor: "#fff",
+            display: "grid",
+            placeItems: "center",
+            fontSize: 10,
+            fontWeight: 700,
+            color: "#1f2937"
+          }}
+        >
+          {centerLabel}
+        </Box>
+      </Box>
+    </Stack>
+  );
+}
+
+function toHumanApiMode(mode) {
+  if (mode === "MCP") return "API mode: MCP";
+  if (mode === "REST") return "API mode: REST";
+  if (mode === "MCP+REST") return "API mode: MCP and REST";
+  if (mode === "NONE") return "API mode: unavailable";
+  return "API mode: unknown";
+}
+
+function humanizeApiCallReason(value) {
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+
+  return humanizeReasonText(text)
+    .replace(/Tool is exposed by MCP and selected by execution preference\./gi, "The tool is exposed in MCP and MCP was selected by preference.")
+    .replace(/MCP registry supports the tool but it is not exposed; REST fallback selected\./gi, "The tool is supported in MCP but not exposed, so REST fallback was used.")
+    .replace(/REST selected by registry support and execution preference\./gi, "REST was selected based on tool support and execution preference.")
+    .replace(/No executable strategy found \(([^)]*)\)\.?/gi, (_match, details) => `No executable API strategy was found (${humanizeStrategyDetails(details)}).`);
+}
+
+function humanizeStrategyDetails(details) {
+  return String(details ?? "")
+    .replace(/supportsMcp=/g, "supports MCP: ")
+    .replace(/exposedByMcp=/g, "exposed by MCP: ")
+    .replace(/supportsRest=/g, "supports REST: ")
+    .replace(/preference=/g, "preference: ")
+    .replace(/\s*,\s*/g, ", ");
+}
+
+function humanizeReasonText(value) {
+  return String(value ?? "")
+    .replace(/\s*\|\s*/g, "; ")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/\s*:\s*/g, ": ")
+    .replace(/\s*;\s*/g, "; ")
+    .trim();
 }
 
 function NotificationToast({ message, severity = "info" }) {
@@ -404,6 +504,64 @@ function App() {
     return "Repository";
   }
 
+  function repositoryCategory(name) {
+    const lowered = String(name || "").toLowerCase();
+    if (lowered.includes("frontend")) return "frontend";
+    if (lowered.includes("backend")) return "backend";
+    if (lowered.includes("mobile")) return "mobile";
+    if (lowered.includes("infra")) return "cloud";
+    if (lowered.includes("doc")) return "docs";
+    return "default";
+  }
+
+  function repositoryIconSvg(name) {
+    const category = repositoryCategory(name);
+    if (category === "frontend") {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="18" height="18" aria-hidden="true">
+          <rect x="3" y="4" width="18" height="12" rx="1.8" />
+          <path d="M8 20h8M12 16v4" />
+        </svg>
+      );
+    }
+    if (category === "backend") {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="18" height="18" aria-hidden="true">
+          <ellipse cx="12" cy="6" rx="7" ry="3" />
+          <path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6" />
+        </svg>
+      );
+    }
+    if (category === "mobile") {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="18" height="18" aria-hidden="true">
+          <rect x="7" y="2.5" width="10" height="19" rx="2" />
+          <path d="M11 18.5h2" />
+        </svg>
+      );
+    }
+    if (category === "cloud") {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="18" height="18" aria-hidden="true">
+          <path d="M7.5 18a4.5 4.5 0 1 1 .9-8.9A5.8 5.8 0 0 1 19 11.2 3.9 3.9 0 1 1 19 19H8a4 4 0 0 1-.5-1z" />
+        </svg>
+      );
+    }
+    if (category === "docs") {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="18" height="18" aria-hidden="true">
+          <path d="M7 3h7l4 4v14H7z" />
+          <path d="M14 3v5h5M9.5 13h5M9.5 16h5" />
+        </svg>
+      );
+    }
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="18" height="18" aria-hidden="true">
+        <path d="M3 7h7l2 2h9v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+      </svg>
+    );
+  }
+
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
@@ -423,23 +581,40 @@ function App() {
             </Button>
           </Stack>
 
-          <Paper elevation={0} sx={{ p: 2.5, border: "1px solid", borderColor: theme.palette.divider, borderRadius: theme.shape.borderRadius, transition: "border-color 0.3s ease-in-out" }}>
-            <Stack direction="row" spacing={1.5} alignItems="center">
-              <Box sx={{ width: 24, height: 24, color: connected ? theme.palette.success.main : theme.palette.error.main }}>
-                <svg stroke="currentColor" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </Box>
-              <Stack spacing={0.2}>
-                <Typography variant="body1" sx={{ fontWeight: 700, color: theme.palette.text.primary }}>
-                  {connected ? `Connected to ${provider.charAt(0).toUpperCase()}${provider.slice(1)}` : `Disconnected from ${provider}`}
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  {connected ? "Connection active and ready" : "Please connect to continue"}
-                </Typography>
-              </Stack>
+          <Stack direction="row" spacing={1.2} alignItems="center" sx={{ px: 0.25 }}>
+            <Box
+              sx={{
+                width: 10,
+                height: 10,
+                borderRadius: "50%",
+                bgcolor: connected ? "#16a34a" : "#dc2626",
+                boxShadow: connected ? "0 0 0 0 rgba(22, 163, 74, 0.7)" : "0 0 0 0 rgba(220, 38, 38, 0.7)",
+                animation: "statusPulse 1.4s infinite",
+                "@keyframes statusPulse": {
+                  "0%": {
+                    transform: "scale(0.95)",
+                    boxShadow: connected ? "0 0 0 0 rgba(22, 163, 74, 0.7)" : "0 0 0 0 rgba(220, 38, 38, 0.7)"
+                  },
+                  "70%": {
+                    transform: "scale(1)",
+                    boxShadow: connected ? "0 0 0 10px rgba(22, 163, 74, 0)" : "0 0 0 10px rgba(220, 38, 38, 0)"
+                  },
+                  "100%": {
+                    transform: "scale(0.95)",
+                    boxShadow: "0 0 0 0 rgba(0, 0, 0, 0)"
+                  }
+                }
+              }}
+            />
+            <Stack spacing={0.1}>
+              <Typography variant="body1" sx={{ fontWeight: 700, color: theme.palette.text.primary }}>
+                {connected ? `Connected to ${provider.charAt(0).toUpperCase()}${provider.slice(1)}` : `Disconnected from ${provider}`}
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                {connected ? "Connection active and ready" : "Please connect to continue"}
+              </Typography>
             </Stack>
-          </Paper>
+          </Stack>
 
           <Paper elevation={0} sx={{ p: 2.5, border: "1px solid #d8dee8", borderRadius: 2.5 }}>
             <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
@@ -460,20 +635,49 @@ function App() {
                 {availableRepos.map((name) => {
                   const checked = selectedRepos.includes(name);
                   return (
-                    <ListItem key={name} disableGutters sx={{ py: 1.15 }}>
-                      <Checkbox
-                        checked={checked}
-                        onChange={() => {
-                          setSelectedRepos((prev) => (
-                            prev.includes(name) ? prev.filter((item) => item !== name) : [...prev, name]
-                          ));
-                        }}
-                        sx={{ mr: 1 }}
-                      />
-                      <ListItemText
-                        primary={<Typography sx={{ fontWeight: 700 }} color="text.primary">{name}</Typography>}
-                        secondary={<Typography variant="body2" color="text.secondary">{repositoryHelperText(name)}</Typography>}
-                      />
+                    <ListItem
+                      key={name}
+                      disableGutters
+                      onClick={() => {
+                        setSelectedRepos((prev) => (
+                          prev.includes(name) ? prev.filter((item) => item !== name) : [...prev, name]
+                        ));
+                      }}
+                      sx={{
+                        py: 1.15,
+                        px: 1,
+                        borderRadius: 1.5,
+                        cursor: "pointer",
+                        transition: "background-color 180ms ease, border-color 180ms ease",
+                        border: "1px solid",
+                        borderColor: checked ? "#9cc7f0" : "transparent",
+                        bgcolor: checked ? "#f4f9ff" : "transparent",
+                        "&:hover": {
+                          bgcolor: checked ? "#edf6ff" : "#f8fbff",
+                          borderColor: checked ? "#8cbbea" : "#e1ecf8"
+                        }
+                      }}
+                    >
+                      <Box sx={{ display: "flex", alignItems: "center", mr: 1 }}>
+                        <Box
+                          sx={{
+                            width: 34,
+                            height: 34,
+                            borderRadius: 1.5,
+                            bgcolor: "#f1f7ff",
+                            border: "1px solid #d9e8f9",
+                            display: "grid",
+                            placeItems: "center",
+                            mr: 1.2
+                          }}
+                        >
+                          <Box sx={{ color: "#0068D1", lineHeight: 0 }}>{repositoryIconSvg(name)}</Box>
+                        </Box>
+                        <ListItemText
+                          primary={<Typography sx={{ fontWeight: 700 }} color="text.primary">{name}</Typography>}
+                          secondary={<Typography variant="body2" color="text.secondary">{repositoryHelperText(name)}</Typography>}
+                        />
+                      </Box>
                     </ListItem>
                   );
                 })}
@@ -486,25 +690,59 @@ function App() {
 
           <Paper elevation={0} sx={{ p: 2.5, border: "1px solid #d8dee8", borderRadius: 2.5 }}>
             <Typography variant="h6" color="text.primary" sx={{ mb: 2 }}>Select Compliance Standard</Typography>
-            <Grid container spacing={1.5}>
-              <Grid item xs={12} md={12}>
-                <Button
-                  fullWidth
-                  variant={selectedCompliance === "iso27001" ? "contained" : "outlined"}
+            <Grid container spacing={3} justifyContent="center">
+              <Grid item xs={12} md={4}>
+                <Paper
+                  elevation={0}
                   onClick={() => setSelectedCompliance("iso27001")}
-                  color="primary"
                   sx={{
-                    justifyContent: "flex-start",
-                    py: 1.2,
-                    borderColor: selectedCompliance === "iso27001" ? "none" : theme.palette.divider,
+                    p: 3,
+                    border: "1px solid",
+                    borderColor: selectedCompliance === "iso27001" ? "#0068D1" : "#d7e6f7",
+                    borderRadius: 3,
+                    height: "100%",
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    textAlign: "center",
+                    gap: 2,
+                    cursor: "pointer",
+                    transition: "all 220ms ease",
+                    boxShadow: selectedCompliance === "iso27001" ? "0 10px 30px rgba(0, 104, 209, 0.12)" : "none",
                     "&:hover": {
-                      borderColor: selectedCompliance === "iso27001" ? "none" : theme.palette.primary.light,
-                      backgroundColor: selectedCompliance === "iso27001" ? theme.palette.primary.dark : theme.palette.action.hover,
+                      borderColor: "#9cc7f0",
+                      boxShadow: "0 10px 30px rgba(0, 104, 209, 0.12)",
+                      transform: "translateY(-3px)"
                     }
                   }}
                 >
-                  ISO 27001
-                </Button>
+                  <Box
+                    sx={{
+                      width: 58,
+                      height: 58,
+                      borderRadius: 2,
+                      bgcolor: "#f1f7ff",
+                      border: "1px solid #d9e8f9",
+                      display: "grid",
+                      placeItems: "center"
+                    }}
+                  >
+                    <Box
+                      component="img"
+                      src="/images.png"
+                      alt="ISO 27001"
+                      sx={{ width: 30, height: 30, objectFit: "contain" }}
+                    />
+                  </Box>
+
+                  <Typography variant="h5" sx={{ fontWeight: 800, color: "#0f172a" }}>
+                    ISO 27001
+                  </Typography>
+
+                  <Typography variant="body2" sx={{ color: "#4a6380", minHeight: 64 }}>
+                    Assess repository compliance against ISO 27001 controls using automated evidence checks.
+                  </Typography>
+                </Paper>
               </Grid>
             </Grid>
           </Paper>
@@ -535,6 +773,19 @@ function App() {
 
               {!running && rows.length > 0 && (
                 <Stack spacing={2}>
+                  {String(result?.evidence_report?.download_url || "").trim() && (
+                    <Box>
+                      <Button
+                        component="a"
+                        href={String(result?.evidence_report?.download_url || "")}
+                        download={String(result?.evidence_report?.file_name || "evidence-report.json")}
+                        variant="outlined"
+                        size="small"
+                      >
+                        Download Evidence Report
+                      </Button>
+                    </Box>
+                  )}
                   <Grid container spacing={1.5}>
                     {Object.entries(summary).map(([key, count]) => (
                       <Grid item xs={6} md={3} key={key}>
@@ -553,13 +804,14 @@ function App() {
                     ))}
                   </Grid>
 
-                  <TableContainer component={Paper} variant="outlined">
-                    <Table size="small">
-                      <TableHead>
+                  <TableContainer component={Paper} variant="outlined" sx={{ border: "1px solid #e0e0e0" }}>
+                    <Table size="small" sx={{ "& .MuiTableCell-root": { border: "1px solid #e0e0e0" } }}>
+                      <TableHead sx={{ bgcolor: "#f2f2f2" }}>
                         <TableRow>
                           <TableCell sx={{ fontWeight: 700, color: theme.palette.text.primary }}>Control ID</TableCell>
                           <TableCell sx={{ fontWeight: 700, color: theme.palette.text.primary }}>Control Name</TableCell>
                           <TableCell sx={{ fontWeight: 700, color: theme.palette.text.primary }}>Status</TableCell>
+                          <TableCell sx={{ fontWeight: 700, color: theme.palette.text.primary }}>Checks</TableCell>
                           <TableCell sx={{ fontWeight: 700, color: theme.palette.text.primary }}>API Call Reason</TableCell>
                           <TableCell sx={{ fontWeight: 700, color: theme.palette.text.primary }}>Status Reason</TableCell>
                           <TableCell sx={{ fontWeight: 700, color: theme.palette.text.primary }}>Repository</TableCell>
@@ -571,10 +823,11 @@ function App() {
                           const reason = getHumanReadableReason(item);
                           const apiCall = getApiCallSummary(item);
                           return (
-                            <TableRow key={`${item?.repository || "repo"}-${item?.control || "ctrl"}-${index}`}>
+                            <TableRow key={`${item?.repository || "repo"}-${item?.control || "ctrl"}-${index}`} sx={{ bgcolor: index % 2 ? "#fafafa" : "#ffffff" }}>
                               <TableCell>{String(item?.control || "-")}</TableCell>
                               <TableCell>{String(item?.description || item?.control_name || "-")}</TableCell>
                               <TableCell>{statusChip(status)}</TableCell>
+                              <TableCell><ChecksPie item={item} /></TableCell>
                               <TableCell>{apiCall}</TableCell>
                               <TableCell>{reason}</TableCell>
                               <TableCell>{String(item?.repository || result?.repository || "-")}</TableCell>

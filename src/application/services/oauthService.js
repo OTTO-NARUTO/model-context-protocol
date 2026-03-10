@@ -1,6 +1,10 @@
 import { randomUUID } from "crypto";
 import { oauthProviders } from "../../infrastructure/providers/oauthProviders.js";
 
+function isTruthyEnv(value) {
+  return new Set(["1", "true", "yes", "on"]).has(String(value ?? "").trim().toLowerCase());
+}
+
 export class OAuthService {
   constructor(db, encryption) {
     this.db = db;
@@ -49,6 +53,9 @@ export class OAuthService {
     if (!token.access_token) {
       const providerError = token.error_description || token.error || "access_token missing from provider response";
       throw new Error(`OAuth token response invalid for ${provider}: ${providerError}`);
+    }
+    if (isTruthyEnv(process.env.DEBUG_OAUTH_TOKENS) && String(provider).toLowerCase() === "github") {
+      console.log("GITHUB ACCESS TOKEN:", token.access_token);
     }
 
     const expiresAt =

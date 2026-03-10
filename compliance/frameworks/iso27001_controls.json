@@ -1,0 +1,22 @@
+{
+  "framework": "ISO27001",
+  "controls": [
+    {
+      "control_id": "8.9",
+      "control_name": "Configuration management",
+      "evidence_source": "code_repo_scan",
+      "checks": [
+        "branch_protection_check"
+      ]
+    },
+    {
+      "control_id": "8.28",
+      "control_name": "Secure coding",
+      "evidence_source": "code_review_scan",
+      "checks": [
+        "secure_review_check"
+      ]
+    }
+  ]
+}
+

@@ -1,0 +1,59 @@
+{
+  "checks": [
+    {
+      "check_id": "branch_protection_check",
+      "description": "Verify primary branches are protected",
+      "tool": {
+        "mcp": {
+          "github": [
+            "list_branches"
+          ],
+          "gitlab": [],
+          "bitbucket": []
+        },
+        "rest": {
+          "github": [
+            "get_repository",
+            "list_branches",
+            "get_branch_protection"
+          ],
+          "gitlab": [],
+          "bitbucket": []
+        }
+      },
+      "evaluation_logic": {
+        "requirementType": "all_must_be_true",
+        "field": "branch_protection_enabled"
+      }
+    },
+    {
+      "check_id": "secure_review_check",
+      "description": "Verify merged pull or merge requests have at least one approved review",
+      "tool": {
+        "mcp": {
+          "github": [
+            "search_pull_requests",
+            "list_pull_requests",
+            "pull_request_read"
+          ],
+          "gitlab": [],
+          "bitbucket": []
+        },
+        "rest": {
+          "github": [
+            "search_pull_requests",
+            "list_pull_requests",
+            "get_pull_request_reviews"
+          ],
+          "gitlab": [],
+          "bitbucket": []
+        }
+      },
+      "evaluation_logic": {
+        "requirementType": "min_reviews",
+        "field": "approved_reviews_count",
+        "threshold": 1
+      }
+    }
+  ]
+}

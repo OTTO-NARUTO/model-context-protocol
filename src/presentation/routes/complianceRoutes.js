@@ -2,16 +2,6 @@ import { Router } from "express";
 import { z } from "zod";
 import { validate } from "../middleware/validationMiddleware.js";
 
-const evaluateSchema = z.object({
-  params: z.object({}).optional().default({}),
-  query: z.object({}).optional().default({}),
-  body: z.object({
-    controlId: z.string().min(1),
-    provider: z.string().min(1),
-    repoName: z.string().min(1)
-  })
-});
-
 const evaluateStandardSchema = z.object({
   params: z.object({}).optional().default({}),
   query: z.object({}).optional().default({}),
@@ -40,7 +30,9 @@ const debugToolsSchema = z.object({
 export function buildComplianceRoutes(controller) {
   const router = Router();
   router.get("/debug/:provider", validate(debugToolsSchema), controller.debugTools);
-  router.post("/evaluate", validate(evaluateSchema), controller.evaluateControl);
+  router.get("/debug/:provider/mcp-tools", validate(debugToolsSchema), controller.debugMcpTools);
+  // Legacy endpoint intentionally disabled: compliance runs are standard-level only.
+  router.post("/evaluate", controller.evaluateControl);
   router.post("/evaluate-standard", validate(evaluateStandardSchema), controller.evaluateStandard);
   return router;
 }

@@ -189,6 +189,8 @@ function renderResultTable(result) {
     resultBox.textContent = "No control results found.";
     return;
   }
+  const evidenceDownloadUrl = String(result?.evidence_report?.download_url ?? "").trim();
+  const evidenceFileName = String(result?.evidence_report?.file_name ?? "evidence-report.json").trim();
 
   const statusOrder = ["PASS", "FAIL", "ERROR", "UNDETERMINED"];
   const statusCounts = new Map(statusOrder.map((status) => [status, 0]));
@@ -221,12 +223,14 @@ function renderResultTable(result) {
     const apiCallText = escapeHtml(getApiCallSummary(item));
     const reasonText = escapeHtml(getHumanReadableReason(item));
     const statusChip = buildStatusChip(item, status, statusClass);
+    const checksPie = buildChecksPieCell(item);
 
     return `
       <tr>
         <td>${controlId}</td>
         <td>${controlName}</td>
         <td>${statusChip}</td>
+        <td>${checksPie}</td>
         <td>${apiCallText}</td>
         <td>${reasonText}</td>
         <td>${repository}</td>
@@ -236,6 +240,13 @@ function renderResultTable(result) {
 
   resultBox.innerHTML = `
     <div class="compliance-summary-grid">${complianceSummary}</div>
+    ${evidenceDownloadUrl ? `
+      <div style="margin: 10px 0 14px 0;">
+        <a href="${escapeHtml(evidenceDownloadUrl)}" download="${escapeHtml(evidenceFileName)}" style="display:inline-block;padding:8px 12px;border:1px solid #cdd9ea;border-radius:8px;text-decoration:none;color:#0f4f94;background:#f6f9ff;font-weight:600;">
+          Download Evidence Report
+        </a>
+      </div>
+    ` : ""}
     <div class="table-wrap">
       <table class="result-table">
         <thead>
@@ -243,6 +254,7 @@ function renderResultTable(result) {
             <th>Control ID</th>
             <th>Control Name</th>
             <th>Status</th>
+            <th>Checks</th>
             <th>API Call Reason</th>
             <th>Status Reason</th>
             <th>Repository</th>
@@ -264,7 +276,7 @@ function statusToClass(status) {
 function getHumanReadableReason(item) {
   const text = String(item?.fail_reason ?? item?.findings ?? item?.answer ?? "").trim();
   if (text) {
-    return text;
+    return humanizeReasonText(text);
   }
 
   const status = String(item?.status ?? "UNDETERMINED").toUpperCase();
@@ -276,8 +288,92 @@ function getHumanReadableReason(item) {
 
 function getApiCallSummary(item) {
   const mode = String(item?.api_call ?? "").trim().toUpperCase() || "UNKNOWN";
-  const reason = String(item?.api_call_reason ?? "").trim();
-  return reason ? `${mode}: ${reason}` : mode;
+  const modeLabel = toHumanApiMode(mode);
+  const reason = humanizeApiCallReason(item?.api_call_reason);
+  return reason ? `${modeLabel}. ${reason}` : modeLabel;
+}
+
+function toHumanApiMode(mode) {
+  if (mode === "MCP") return "API mode: MCP";
+  if (mode === "REST") return "API mode: REST";
+  if (mode === "MCP+REST") return "API mode: MCP and REST";
+  if (mode === "NONE") return "API mode: unavailable";
+  return "API mode: unknown";
+}
+
+function humanizeApiCallReason(value) {
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+
+  const normalized = humanizeReasonText(text)
+    .replace(/Tool is exposed by MCP and selected by execution preference\./gi, "The tool is exposed in MCP and MCP was selected by preference.")
+    .replace(/MCP registry supports the tool but it is not exposed; REST fallback selected\./gi, "The tool is supported in MCP but not exposed, so REST fallback was used.")
+    .replace(/REST selected by registry support and execution preference\./gi, "REST was selected based on tool support and execution preference.")
+    .replace(/No executable strategy found \(([^)]*)\)\.?/gi, (_match, details) => `No executable API strategy was found (${humanizeStrategyDetails(details)}).`);
+
+  return normalized;
+}
+
+function humanizeStrategyDetails(details) {
+  return String(details ?? "")
+    .replace(/supportsMcp=/g, "supports MCP: ")
+    .replace(/exposedByMcp=/g, "exposed by MCP: ")
+    .replace(/supportsRest=/g, "supports REST: ")
+    .replace(/preference=/g, "preference: ")
+    .replace(/\s*,\s*/g, ", ");
+}
+
+function humanizeReasonText(value) {
+  return String(value ?? "")
+    .replace(/\s*\|\s*/g, "; ")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/\s*:\s*/g, ": ")
+    .replace(/\s*;\s*/g, "; ")
+    .trim();
+}
+
+function getCheckStatusCounts(item) {
+  const checks = Array.isArray(item?.check_results) ? item.check_results : [];
+  if (checks.length === 0) {
+    const status = String(item?.status ?? "").toUpperCase();
+    return {
+      pass: status === "PASS" ? 1 : 0,
+      fail: status === "FAIL" || status === "ERROR" ? 1 : 0,
+      total: status ? 1 : 0
+    };
+  }
+
+  let pass = 0;
+  let fail = 0;
+  for (const check of checks) {
+    const status = String(check?.status ?? "").toUpperCase();
+    if (status === "PASS") pass += 1;
+    if (status === "FAIL" || status === "ERROR") fail += 1;
+  }
+  return { pass, fail, total: checks.length };
+}
+
+function buildChecksPieCell(item) {
+  const counts = getCheckStatusCounts(item);
+  const totalForChart = Math.max(1, counts.pass + counts.fail);
+  const passDeg = Math.round((counts.pass / totalForChart) * 360);
+  const centerLabel = counts.fail === 0
+    ? `${counts.pass}/${counts.total}`
+    : counts.pass === 0
+      ? `${counts.fail}/${counts.total}`
+      : `${counts.pass}/${counts.fail}`;
+  const pieStyle = `background: conic-gradient(#2e7d32 0deg ${passDeg}deg, #d32f2f ${passDeg}deg 360deg);`;
+
+  return `
+    <div style="display:flex;align-items:center;justify-content:center;">
+      <div style="position:relative;width:36px;height:36px;border-radius:50%;${pieStyle}">
+        <div style="position:absolute;inset:5px;background:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#1f2937;">
+          ${escapeHtml(centerLabel)}
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 function buildStatusChip(_item, status, statusClass) {
